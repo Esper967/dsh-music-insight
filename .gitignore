@@ -1,0 +1,23 @@
+# 输出与缓存
+out/
+*.egg-info/
+dist/
+build/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# 音频与版权材料：不要提交
+*.mp3
+*.m4a
+*.flac
+*.wav
+*.ogg
+!examples/**/*.wav
+
+# 生成物
+panel.png
+*.json
+!examples/**/*.json
