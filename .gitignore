@@ -21,3 +21,6 @@ venv/
 panel.png
 *.json
 !examples/**/*.json
+
+# 临时实验脚本
+_*.py

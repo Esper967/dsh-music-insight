@@ -57,6 +57,7 @@ def evidence_index(feat: dict, struct: dict) -> list[dict]:
     items = [
         ("速度", "bpm", f"{feat['bpm']} BPM"),
         ("调性", "key", f"{feat['key']}（相关 {feat['key_correlation']}）"),
+        ("调性置信", "key_margin", f"候选间隔 {feat.get('key_margin', '-')}"),
         ("时长", "duration_sec", f"{feat['duration_sec']} 秒"),
         ("平均响度", "loudness_db.mean", f"{feat['loudness_db']['mean']} dB"),
         ("响度范围", "loudness_db.min/max",
@@ -126,13 +127,26 @@ def to_markdown(result: dict, path: str | Path) -> str:
         "|---|---|",
         f"| 时长 | {m['duration_sec']} 秒 |",
         f"| 速度 | {m['bpm']} BPM |",
-        f"| 调性 | {m['key']}（相关 {m['key_correlation']}） |",
+        f"| 调性 | {m['key']}（相关 {m['key_correlation']}，候选间隔 {m.get('key_margin', '-')}） |",
         f"| 平均响度 | {m['loudness_db']['mean']} dB（{m['loudness_db']['min']} ~ {m['loudness_db']['max']}） |",
         f"| 峰值相对电平 | {m['crest_db']} dB |",
         f"| 音符密度 | {m['note_density_per_sec']}/s |",
         f"| 主要音级 | {' / '.join(m['mean_chroma_top3'])} |",
         f"| 人声频段占比 | {m['vocal_band_ratio']:.0%}（弱证据） |",
         "",
+    ]
+    candidates = m.get("key_candidates") or []
+    if candidates:
+        rendered = " / ".join(f"{c['key']} {c['corr']}" for c in candidates)
+        lines.append(f"调性候选：{rendered}")
+        lines.append("")
+    if m.get("key_margin") is not None and m["key_margin"] < 0.06:
+        lines += [
+            f"> ⚠️ 调性候选间隔只有 {m['key_margin']}，这个结论不可靠。"
+            "F 大调 / A 小调这类共享 6 个音级的调，chroma 方法会来回摇。",
+            "",
+        ]
+    lines += [
         "## 2. 结构",
         "",
         "| 段 | 起止（秒） | 响度 dB | 频谱重心 Hz | 和弦猜测 |",

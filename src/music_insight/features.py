@@ -102,15 +102,25 @@ def tempo(flux: np.ndarray, sr: int, hop: int = HOP,
     return float(bpm)
 
 
-def key(mean_chroma: np.ndarray) -> tuple[str, float]:
-    """Krumhansl 相关法猜调性，返回 ("A 小调", 相关系数)。"""
-    best = (-2.0, "?")
+def key_candidates(mean_chroma: np.ndarray, top: int = 3) -> list[tuple[str, float]]:
+    """Krumhansl 相关法的前 N 个调性候选，按相关度降序。
+
+    候选间隔（top1 - top2）很小时说明这个估计不可靠——尤其是 F 大调与 A 小调
+    这种共享 6 个音级的调，chroma 方法本来就会来回摇。
+    """
+    scores = []
     for root in range(12):
         for profile, mode in ((_MAJOR, "大调"), (_MINOR, "小调")):
             c = float(np.corrcoef(np.roll(profile, root), mean_chroma)[0, 1])
-            if c > best[0]:
-                best = (c, f"{PITCH_NAMES[root]} {mode}")
-    return best[1], round(best[0], 3)
+            scores.append((round(c, 3), f"{PITCH_NAMES[root]} {mode}"))
+    scores.sort(reverse=True)
+    return [(name, score) for score, name in scores[:top]]
+
+
+def key(mean_chroma: np.ndarray) -> tuple[str, float]:
+    """取第一候选，返回 ("A 小调", 相关系数)。"""
+    name, score = key_candidates(mean_chroma, 1)[0]
+    return name, score
 
 
 def loudness_curve(x: np.ndarray, hop: int = HOP, n_fft: int = N_FFT) -> np.ndarray:
@@ -146,7 +156,9 @@ def extract(x: np.ndarray, sr: int) -> dict:
     cent = spectral_centroid(S, sr)
     flux = onset_flux(logmel)
     mean_chroma = ch.mean(axis=1)
-    key_name, key_corr = key(mean_chroma)
+    candidates = key_candidates(mean_chroma, 3)
+    key_name, key_corr = candidates[0]
+    key_margin = round(candidates[0][1] - candidates[1][1], 3) if len(candidates) > 1 else 0.0
     loud = loudness_curve(x)
     rms_dbfs = 20 * np.log10(np.sqrt(np.mean(x ** 2)) + 1e-9)
 
@@ -156,6 +168,8 @@ def extract(x: np.ndarray, sr: int) -> dict:
         "bpm": round(tempo(flux, sr), 1),
         "key": key_name,
         "key_correlation": key_corr,
+        "key_margin": key_margin,
+        "key_candidates": [{"key": n, "corr": s} for n, s in candidates],
         "loudness_db": {
             "mean": round(float(rms_dbfs), 1),
             "min": round(float(loud.min()), 1),

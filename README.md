@@ -31,6 +31,9 @@ pip install -e ".[decode]"     # numpy + pillow + av（av 用于 mp3/m4a/flac）
 python examples/make_demo.py out/demo.wav
 
 music-insight out/demo.wav --out out/demo
+
+# 批量分析一个文件夹，输出汇总表
+python examples/batch.py "某处/音乐文件夹" --out out/batch
 ```
 
 输出：
@@ -86,6 +89,9 @@ out/demo/
 - **和弦是猜测**：用 2 秒块的音级能量猜三和弦，不分转位、不分大小调色彩
 - **调性有混淆**：关系大小调、C/F 这类共享音级的调性会判错
 - **BPM 有倍频歧义**：折到 70–160 区间缓解，不等于消除
+- **调性有混淆**：关系大小调、共享 6 个音级的调（如 F 大调 / A 小调）会来回摇。
+  报告会给出前三个候选和候选间隔；间隔 < 0.06 时明确标注“不可靠”
+- **解码器覆盖不全**：AVS3 音频（sample entry `av3a`）当前 FFmpeg 构建不支持，需要先转成 mp3/flac
 - **人声频段占比是弱证据**：乐器也占 300–3000 Hz
 - **无流派、无年代、无乐器识别**：需要另外的嵌入模型
 - 纯音乐上歌词转写会产生幻觉，所以 `--lyrics` 默认关闭且必须检查 `no_speech_prob`
