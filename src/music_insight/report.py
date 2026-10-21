@@ -177,12 +177,18 @@ def to_markdown(result: dict, path: str | Path) -> str:
         kfc = result.get("key_from_chords")
         lines += ["", "## 4. 和弦（节拍同步）", ""]
         if kfc:
-            lines += [
-                f"- 由和弦反推调性：**{kfc['key']}**（margin {kfc['margin']}，"
-                f"次选 {kfc['runner_up']}）",
-                f"- 高频和弦：{' / '.join(kfc['top_chords'])}",
-                "",
-            ]
+            if kfc.get("ambiguous_relative"):
+                pair = kfc.get("relative_pair") or [kfc["key"], kfc["runner_up"]]
+                lines += [
+                    f"- ⚠️ 关系大小调二选一：**{pair[0]}** / {pair[1]}",
+                    "  两者共享全部调内和弦，仅凭和弦序列无法区分，需要人耳或旋律确认。",
+                ]
+            else:
+                lines += [
+                    f"- 由和弦反推调性：**{kfc['key']}**（margin {kfc['margin']}，"
+                    f"次选 {kfc['runner_up']}）",
+                ]
+            lines += [f"- 高频和弦：{' / '.join(kfc['top_chords'])}", ""]
         lines += ["| 起止（秒） | 和弦 |", "|---|---|"]
         for seg in result["chords"]["segments"][:40]:
             lines.append(f"| {seg['start']} – {seg['end']} | {seg['chord']} |")

@@ -128,11 +128,23 @@ def _chord_root_quality(name: str) -> tuple[int, str] | None:
     return PITCH_NAMES.index(root), cat
 
 
+def _relative_of(key: str) -> str:
+    """'A# 大调' ↔ 'G 小调'（关系大小调，共享全部 7 个调内和弦）。"""
+    name, mode = key.split()
+    if name not in PITCH_NAMES:
+        return ""
+    pc = PITCH_NAMES.index(name)
+    if mode == "大调":
+        return f"{PITCH_NAMES[(pc + 9) % 12]} 小调"
+    return f"{PITCH_NAMES[(pc + 3) % 12]} 大调"
+
+
 def key_from_chords(chords: list[tuple[str, float]]) -> dict:
     """用已识别的和弦序列（和弦名, 持续秒数）反推调性。
 
     比纯音级统计可靠：大三/小三和弦直接携带调式信息，
-    能绕开“关系大小调共享音级”的死结。
+    能绕开“关系大小调共享音级”的死结的一半——但**只限一半**：
+    关系大小调共享全部调内和弦，仅凭和弦序列无法区分，所以输出两个候选并标注歧义。
     """
     durations: dict[str, float] = {}
     for name, dur in chords:
@@ -149,16 +161,26 @@ def key_from_chords(chords: list[tuple[str, float]]) -> dict:
                     continue
                 root, cat = rq
                 if expected.get(root) == cat:
-                    # 主和弦加权，打破关系大小调的平手
                     score += dur * (2.0 if root == tonic else 1.0)
             scored.append((score, f"{PITCH_NAMES[tonic]} {mode}"))
     scored.sort(reverse=True)
+
     total = sum(d for d in durations.values()) + 1e-9
+    best_key, best_score = scored[0][1], scored[0][0]
+    runner, runner_score = scored[1][1], scored[1][0]
+
+    # 关系大小调共享全部调内和弦：只要它的得分接近最优，就必须并列报出来
+    relative = _relative_of(best_key)
+    relative_score = next((s for s, k in scored if k == relative), 0.0)
+    ambiguous = bool(relative) and relative_score >= 0.6 * best_score
     return {
-        "key": scored[0][1],
-        "score": round(scored[0][0] / total, 3),
-        "runner_up": scored[1][1],
-        "margin": round((scored[0][0] - scored[1][0]) / total, 3),
+        "key": best_key,
+        "score": round(best_score / total, 3),
+        "runner_up": runner,
+        "runner_score": round(runner_score / total, 3),
+        "margin": round((best_score - runner_score) / total, 3),
+        "ambiguous_relative": ambiguous,
+        "relative_pair": [best_key, relative] if ambiguous else [],
         "top_chords": [f"{n} {d:.1f}s" for n, d in
                        sorted(durations.items(), key=lambda kv: -kv[1])[:6]],
     }
