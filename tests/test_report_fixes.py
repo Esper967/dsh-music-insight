@@ -76,7 +76,7 @@ def test_report_drops_legacy_chord_columns(tmp_path):
 def test_report_never_claims_vocals(tmp_path):
     """回归：纯钢琴曲也曾被判成「人声频段占比 82%」。
 
-    300~3000 Hz 能量占比只是亮度描述（18 首纯器乐样本实测与频谱重心 r=-0.91），
+    300~3000 Hz 能量占比只是亮度描述（18 首纯器乐样本实测与频谱重心 r=-0.89），
     报告里不能再出现旧字段名或「弱证据」式的人声暗示。
     """
     wav = tmp_path / "demo.wav"
