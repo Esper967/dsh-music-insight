@@ -107,6 +107,63 @@ def ending_tonic(x: np.ndarray, sr: int, tuning_cents: float) -> dict:
     }
 
 
+# 大调/小调的调内三和弦（音级 → 性质）
+MAJOR_STEPS = {0: "maj", 2: "min", 4: "min", 5: "maj", 7: "maj", 9: "min", 11: "dim"}
+MINOR_STEPS = {0: "min", 2: "dim", 3: "maj", 5: "min", 7: "min", 8: "maj", 10: "maj"}
+
+
+def _chord_root_quality(name: str) -> tuple[int, str] | None:
+    root = name[:2] if len(name) > 1 and name[1] == "#" else name[:1]
+    if root not in PITCH_NAMES:
+        return None
+    qual = name[len(root):]
+    if qual in ("", "maj7"):
+        cat = "maj"
+    elif qual in ("m", "m7"):
+        cat = "min"
+    elif qual == "dim":
+        cat = "dim"
+    else:
+        cat = "other"
+    return PITCH_NAMES.index(root), cat
+
+
+def key_from_chords(chords: list[tuple[str, float]]) -> dict:
+    """用已识别的和弦序列（和弦名, 持续秒数）反推调性。
+
+    比纯音级统计可靠：大三/小三和弦直接携带调式信息，
+    能绕开“关系大小调共享音级”的死结。
+    """
+    durations: dict[str, float] = {}
+    for name, dur in chords:
+        durations[name] = durations.get(name, 0.0) + max(dur, 0.0)
+
+    scored = []
+    for tonic in range(12):
+        for mode, steps in (("大调", MAJOR_STEPS), ("小调", MINOR_STEPS)):
+            expected = {(tonic + k) % 12: v for k, v in steps.items()}
+            score = 0.0
+            for name, dur in durations.items():
+                rq = _chord_root_quality(name)
+                if rq is None:
+                    continue
+                root, cat = rq
+                if expected.get(root) == cat:
+                    # 主和弦加权，打破关系大小调的平手
+                    score += dur * (2.0 if root == tonic else 1.0)
+            scored.append((score, f"{PITCH_NAMES[tonic]} {mode}"))
+    scored.sort(reverse=True)
+    total = sum(d for d in durations.values()) + 1e-9
+    return {
+        "key": scored[0][1],
+        "score": round(scored[0][0] / total, 3),
+        "runner_up": scored[1][1],
+        "margin": round((scored[0][0] - scored[1][0]) / total, 3),
+        "top_chords": [f"{n} {d:.1f}s" for n, d in
+                       sorted(durations.items(), key=lambda kv: -kv[1])[:6]],
+    }
+
+
 def detect(x: np.ndarray, sr: int) -> dict:
     """多源调性估计。返回每个源的投票 + 一致性。"""
     S = stft(x, n_fft=HPCP_FFT, hop=HPCP_HOP)

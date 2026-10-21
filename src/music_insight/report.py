@@ -173,15 +173,31 @@ def to_markdown(result: dict, path: str | Path) -> str:
     for r in result["timeline"]:
         lines.append(f"| {r['t']}s | {r['chord_guess']} | {r['loud_db']} | {r['brightness_hz']:.0f} |")
 
+    if result.get("chords") and "segments" in result["chords"]:
+        kfc = result.get("key_from_chords")
+        lines += ["", "## 4. 和弦（节拍同步）", ""]
+        if kfc:
+            lines += [
+                f"- 由和弦反推调性：**{kfc['key']}**（margin {kfc['margin']}，"
+                f"次选 {kfc['runner_up']}）",
+                f"- 高频和弦：{' / '.join(kfc['top_chords'])}",
+                "",
+            ]
+        lines += ["| 起止（秒） | 和弦 |", "|---|---|"]
+        for seg in result["chords"]["segments"][:40]:
+            lines.append(f"| {seg['start']} – {seg['end']} | {seg['chord']} |")
+        if len(result["chords"]["segments"]) > 40:
+            lines.append(f"| … | 共 {len(result['chords']['segments'])} 段 |")
+
     lines += [
         "",
-        "## 4. 情绪先验（启发式，低置信度）",
+        "## 5. 情绪先验（启发式，低置信度）",
         "",
         f"- 方法：`{md['method']}`，置信度 `{md['confidence']}`",
         f"- 唤醒度 {md['arousal']}，效价 {md['valence']} → {md['labels']}",
         f"- ⚠️ {md['caveat']}",
         "",
-        "## 5. 证据索引",
+        "## 6. 证据索引",
         "",
         "| 结论 | 字段 | 值 |",
         "|---|---|---|",
@@ -191,7 +207,7 @@ def to_markdown(result: dict, path: str | Path) -> str:
 
     lines += [
         "",
-        "## 6. 已知限制",
+        "## 7. 已知限制",
         "",
         "- **和弦猜测不可靠**：用 2 秒块音级能量猜三和弦，不分转位、不分大小调色彩。",
         "- **结构检测依赖响度与音色变化**：没有做人声/伴奏分离时，靠旋律区分的主歌/副歌可能识别不出来。",
@@ -199,7 +215,7 @@ def to_markdown(result: dict, path: str | Path) -> str:
         "- **情绪是猜测**：见第 4 节。",
         "- 无歌词、无乐器识别、无年代/流派判断。",
         "",
-        "## 7. 给解读模型的提示词",
+        "## 8. 给解读模型的提示词",
         "",
         "```text",
         LLM_PROMPT.strip(),

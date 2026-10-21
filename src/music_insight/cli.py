@@ -6,8 +6,12 @@ import argparse
 import sys
 from pathlib import Path
 
+import numpy as np
+
 from . import audio as audio_mod
-from . import features, render, report, structure
+from . import beats as beats_mod
+from . import chords as chords_mod
+from . import features, keydetect, render, report, structure
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,6 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default="out", help="输出目录，默认 ./out")
     p.add_argument("--no-images", action="store_true", help="不生成图")
     p.add_argument("--lyrics", action="store_true", help="尝试转写歌词（需要 faster-whisper）")
+    p.add_argument("--chords", action="store_true",
+                   help="节拍跟踪 + 和弦识别，并由和弦反推调性（纯本地）")
     p.add_argument("--quiet", action="store_true", help="只输出文件路径")
     p.add_argument("--version", action="version", version="music-insight 0.1.0")
     return p
@@ -53,6 +59,21 @@ def main(argv: list[str] | None = None) -> int:
         image_path = render.figure(feat, struct, samples, out_dir / "panel.png")
 
     result = report.build(feat, struct, str(src), image_path)
+
+    if args.chords:
+        beat_times = beats_mod.track_beats(samples, sr)
+        if len(beat_times) >= 4:
+            beat_times = np.append(beat_times, samples.size / sr)
+            sync = chords_mod.detect_beat_sync(samples, sr, beat_times)
+            durations = [(s["chord"], s["end"] - s["start"]) for s in sync["segments"]]
+            result["chords"] = {
+                "n_segments": sync["n_segments"],
+                "segments": sync["segments"],
+                "beat_count": len(beat_times) - 1,
+            }
+            result["key_from_chords"] = keydetect.key_from_chords(durations)
+        else:
+            result["chords"] = {"error": "beat tracking failed"}
 
     if args.lyrics:
         try:
