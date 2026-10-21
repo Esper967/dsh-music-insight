@@ -11,7 +11,7 @@
  * (same pattern as the profile's dsh-local-llm plugin).
  */
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +24,7 @@ const DEFAULTS = {
   repoRoot: "",
   timeoutMs: 180000,
   defaultChords: true,
+  outputSuffix: "-分析",
 };
 
 function renderText(_args, value) {
@@ -31,12 +32,11 @@ function renderText(_args, value) {
   return [{ type: "text", text }];
 }
 
-function summarize(analysis) {
+function summarize(analysis, outDir) {
   const m = analysis.measurements ?? {};
-  const head = [`音频：${analysis.source ?? "?"}`];
-  head.push(`${m.duration_sec ?? "?"} 秒 · ${m.bpm ?? "?"} BPM · ${m.key ?? "?"}` +
+  const lines = [`音频：${analysis.source ?? "?"}`];
+  lines.push(`${m.duration_sec ?? "?"} 秒 · ${m.bpm ?? "?"} BPM · ${m.key ?? "?"}` +
     (m.loudness_db ? ` · 平均 ${m.loudness_db.mean} dB` : ""));
-  const lines = head;
 
   const kfc = analysis.key_from_chords;
   if (kfc) {
@@ -49,9 +49,32 @@ function summarize(analysis) {
     lines.push(`主要音级：${m.mean_chroma_top3.join(" / ")}`);
   }
 
-  const chords = analysis.chords;
-  if (chords?.n_segments) lines.push(`和弦段数：${chords.n_segments}`);
+  if (analysis.chords?.n_segments) lines.push(`和弦段数：${analysis.chords.n_segments}`);
+  if (outDir) lines.push(`输出目录：${outDir}`);
   return lines.join("\n");
+}
+
+/**
+ * Resolve the output directory for one run.
+ *
+ * Priority: explicit `output_dir` argument (resolved against the Session cwd) →
+ * `<audio name>-分析` beside the audio file → a fresh temp directory as fallback
+ * when the audio's directory is not writable.
+ */
+async function resolveOutDir(target, requested, cwd, suffix) {
+  if (requested) {
+    const dir = path.isAbsolute(requested) ? requested : path.resolve(cwd, requested);
+    await mkdir(dir, { recursive: true });
+    return { dir, cleanup: false };
+  }
+  const beside = path.join(path.dirname(target), `${path.parse(target).name}${suffix}`);
+  try {
+    await mkdir(beside, { recursive: true });
+    return { dir: beside, cleanup: false };
+  } catch {
+    const dir = await mkdtemp(path.join(tmpdir(), "music-insight-"));
+    return { dir, cleanup: true };
+  }
 }
 
 export function apply(ctx, rawConfig) {
@@ -74,7 +97,8 @@ export function apply(ctx, rawConfig) {
     description:
       "Analyze one local audio file with the local music-insight pipeline and return a compact evidence pack: " +
       "duration, BPM, key, loudness and structure, plus (with chords) a beat-synchronised chord timeline whose key is inferred from the chord sequence. " +
-      "Writes a full Markdown report and a measurement panel image next to the analysis and returns their paths. " +
+      "Writes report.md / analysis.json / timeline.csv / panel.png and returns their directory and paths. " +
+      "By default the output folder is '<audio name>-分析' beside the audio file; pass output_dir to put it elsewhere. " +
       "This is a deterministic measurement tool, not a music-understanding model: melody extraction is not supported. " +
       "Runs offline on the Host; WAV decodes with the standard library, and mp3/m4a/flac need PyAV in the configured Python.",
     parameters: {
@@ -87,6 +111,13 @@ export function apply(ctx, rawConfig) {
         chords: {
           type: "boolean",
           description: "Run beat tracking + chord recognition and infer the key from chords. Defaults to the plugin config (true).",
+        },
+        output_dir: {
+          type: "string",
+          description:
+            "Optional output directory for report.md / analysis.json / timeline.csv / panel.png. " +
+            "Relative paths resolve against the Session working directory; existing files there are overwritten. " +
+            "Omit to use '<audio name>-分析' beside the audio file.",
         },
       },
       required: ["file_path"],
@@ -103,7 +134,8 @@ export function apply(ctx, rawConfig) {
       if (!existsSync(target)) throw new Error(`music_insight: file not found: ${target}`);
 
       const withChords = args?.chords ?? config.defaultChords;
-      const outDir = await mkdtemp(path.join(tmpdir(), "music-insight-"));
+      const requestedDir = typeof args?.output_dir === "string" ? args.output_dir.trim() : "";
+      const { dir: outDir, cleanup } = await resolveOutDir(target, requestedDir, cwd, config.outputSuffix);
 
       const argv = [python, "-m", "music_insight.cli", target, "--out", outDir, "--quiet"];
       if (withChords) argv.push("--chords");
@@ -132,12 +164,15 @@ export function apply(ctx, rawConfig) {
         stdout = handle.collected.stdout?.readFrom(0)?.text ?? "";
         stderr = handle.collected.stderr?.readFrom(0)?.text ?? "";
       } catch (error) {
-        await rm(outDir, { recursive: true, force: true }).catch(() => {});
+        if (cleanup) await rm(outDir, { recursive: true, force: true }).catch(() => {});
         throw new Error(`music_insight: failed to start the analysis CLI: ${error?.message ?? error}`);
       }
 
       if (outcome.exitCode !== 0) {
-        await rm(outDir, { recursive: true, force: true }).catch(() => {});
+        if (cleanup) {
+          const left = await readdir(outDir).catch(() => []);
+          if (left.length === 0) await rm(outDir, { recursive: true, force: true }).catch(() => {});
+        }
         const tail = (stderr || stdout).trim().split("\n").slice(-6).join("\n");
         throw new Error(`music_insight: analysis failed (exit ${outcome.exitCode}): ${tail}`);
       }
@@ -147,7 +182,8 @@ export function apply(ctx, rawConfig) {
       const panelPath = path.join(outDir, "panel.png");
       const analysis = JSON.parse(await readFile(analysisPath, "utf8"));
       return {
-        summary: `${summarize(analysis)}\n报告：${reportPath}`,
+        summary: summarize(analysis, outDir),
+        output_dir: outDir,
         report_path: reportPath,
         analysis_path: analysisPath,
         ...(existsSync(panelPath) ? { panel_path: panelPath } : {}),

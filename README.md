@@ -120,8 +120,17 @@ dsh plugin --profile <你的 profile 名> add <本仓库路径>/dsh-plugin
 | `repoRoot` | music-insight 仓库路径；插件在仓库内时自动推导 |
 | `defaultChords` | 是否默认跑节拍/和弦（默认 true） |
 
-工具参数：`file_path`（必需，相对路径按会话工作目录解析）、`chords`（覆盖默认值）。
-返回：一段摘要，外加 `report.md` / `analysis.json` / `panel.png` 的绝对路径。
+工具参数：
+
+| 参数 | 说明 |
+|---|---|
+| `file_path` | 必需。音频路径，相对路径按会话工作目录解析 |
+| `chords` | 是否跑节拍/和弦，覆盖配置默认值 |
+| `output_dir` | 可选。输出目录，相对路径按会话工作目录解析；省略时默认 `<歌名>-分析/`（放在音频同目录） |
+
+输出文件：`report.md` / `analysis.json` / `timeline.csv` / `panel.png`。
+同名文件会被覆盖；音频所在目录不可写时自动退回系统临时目录。
+返回：一段摘要 + `output_dir` + 各文件绝对路径。
 
 已验证：WAV（标准库解码）与 MP3（PyAV）都能跑通。
 
