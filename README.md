@@ -37,7 +37,7 @@
 ## 快速开始
 
 ```bash
-git clone <repo>
+git clone https://github.com/Esper967/music-insight.git
 cd music-insight
 pip install -e ".[decode]"        # numpy + pillow，av 用于 mp3/m4a/flac
 pip install -e ".[dev]"           # 跑测试
