@@ -112,13 +112,39 @@ def key(mean_chroma: np.ndarray) -> tuple[str, float]:
     return name, score
 
 
+LOUDNESS_FLOOR_DB = -90.0
+
+
 def loudness_curve(x: np.ndarray, hop: int = HOP, n_fft: int = N_FFT) -> np.ndarray:
-    """逐帧 RMS，单位 dBFS。"""
+    """逐帧 RMS，单位 dBFS。数字静音截到 -90 dB，避免出现 -180 这种无意义的对数伪影。"""
+    floor = 10 ** (LOUDNESS_FLOOR_DB / 20.0)
     out = []
     for i in range(0, max(1, len(x) - n_fft), hop):
         seg = x[i:i + n_fft]
-        out.append(20 * np.log10(np.sqrt(np.mean(seg ** 2)) + 1e-9) if seg.size else -99.0)
+        rms = float(np.sqrt(np.mean(seg ** 2))) if seg.size else 0.0
+        out.append(20 * np.log10(max(rms, floor)))
     return np.array(out, np.float32)
+
+
+def onset_rate(flux: np.ndarray, sr: int, hop: int = HOP) -> float:
+    """起音率（次/秒）：流量曲线的局部极大，阈值取“中位数 + 5 倍 MAD”。
+
+    用中位数/MAD 而不是均值/标准差：稳态音（正弦、持续和弦）的流量是数值噪声，
+    均值阈值会把噪声也数成起音。这是“相对起音密度”，不是音符数。
+    """
+    if flux.size < 5:
+        return 0.0
+    median = float(np.median(flux))
+    mad = float(np.median(np.abs(flux - median)))
+    threshold = median + 5.0 * mad
+    if threshold <= 0.0:
+        return 0.0
+    duration = len(flux) * hop / sr
+    peaks = 0
+    for i in range(2, len(flux) - 2):
+        if flux[i] >= threshold and flux[i] == flux[i - 2:i + 3].max():
+            peaks += 1
+    return round(peaks / max(duration, 1e-9), 2)
 
 
 def band_energy(S: np.ndarray, sr: int, lo: float, hi: float,
@@ -167,7 +193,7 @@ def extract(x: np.ndarray, sr: int) -> dict:
             "max": round(float(loud.max()), 1),
         },
         "crest_db": round(float(rms_dbfs - 20 * np.log10(np.max(np.abs(x)) + 1e-9)), 1),
-        "note_density_per_sec": round(float((flux > flux.std()).sum() / max(len(x) / sr, 1e-9)), 2),
+        "note_density_per_sec": onset_rate(flux, sr),
         "vocal_band_ratio": round(vocal_band_ratio(S, sr), 3),
         "mean_chroma_top3": [PITCH_NAMES[i] for i in np.argsort(mean_chroma)[::-1][:3]],
         "_S": S, "_logmel": logmel, "_chroma": ch, "_centroid": cent,

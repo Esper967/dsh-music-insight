@@ -17,28 +17,44 @@ def _clip(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, v))
 
 
-def mood_priors(feat: dict) -> dict:
-    """**不是测量**。基于公开研究里常见的统计先验，把客观量线性映射到唤醒/效价。
+BRIGHTNESS_LOW_HZ = 1000.0
+BRIGHTNESS_SPAN_HZ = 3000.0
 
-    任何使用方都应把它当“猜测”，置信度低，且不能用于情绪标注或心理评估。
+
+def mood_priors(feat: dict) -> dict:
+    """**不是测量**。基于统计先验把客观量线性映射到唤醒/效价。
+
+    校准范围：频谱重心 1000–4000 Hz、每分钟起音 0–12 次、BPM 60–130、平均响度 -30~-8 dB。
+    超出范围时数值会被裁剪，此时明确标记“先验失效”，不给情绪标签。
     """
     bpm = feat["bpm"]
     loud = feat["loudness_db"]["mean"]
     density = feat["note_density_per_sec"]
-    brightness = feat.get("brightness_mean_hz", 1000.0)
+    brightness = feat.get("brightness_mean_hz", BRIGHTNESS_LOW_HZ)
     major = feat["key"].endswith("大调")
 
-    arousal = _clip(0.5 * (bpm - 60) / 70 + 0.3 * (loud + 30) / 22 + 0.2 * density / 12)
-    valence = _clip(0.35 * (brightness - 700) / 900 + 0.3 * (1.0 if major else 0.15)
-                    + 0.35 * (bpm - 60) / 70)
+    bpm_term = (bpm - 60) / 70
+    loud_term = (loud + 30) / 22
+    density_term = density / 12.0
+    bright_term = (brightness - BRIGHTNESS_LOW_HZ) / BRIGHTNESS_SPAN_HZ
+
+    raw_arousal = 0.5 * bpm_term + 0.3 * loud_term + 0.2 * density_term
+    raw_valence = 0.35 * bright_term + 0.3 * (1.0 if major else 0.15) + 0.35 * bpm_term
+    saturated = any(v < -0.05 or v > 1.05 for v in
+                    (bpm_term, loud_term, density_term, bright_term)) or \
+        raw_arousal < 0 or raw_arousal > 1 or raw_valence < 0 or raw_valence > 1
+
+    arousal = _clip(raw_arousal)
+    valence = _clip(raw_valence)
     return {
         "method": "heuristic-v0",
-        "confidence": "low",
+        "confidence": "invalid" if saturated else "low",
+        "saturated": saturated,
         "arousal": round(arousal, 2),
         "valence": round(valence, 2),
-        "labels": _quadrant(arousal, valence),
-        "caveat": "线性先验映射，未经验证；小调+快节奏、亮失真吉他等都会打破这个映射。"
-                  "不要把它当测量值使用。",
+        "labels": "先验失效（输入超出校准范围）" if saturated else _quadrant(arousal, valence),
+        "caveat": "线性先验映射，未经验证；只在校准范围内有意义。"
+                  "小调+快节奏、亮失真吉他等都会打破这个映射，不要把它当测量值使用。",
     }
 
 
@@ -154,20 +170,21 @@ def to_markdown(result: dict, path: str | Path) -> str:
     lines += [
         "## 2. 结构",
         "",
-        "| 段 | 起止（秒） | 响度 dB | 频谱重心 Hz | 和弦猜测 |",
-        "|---|---|---|---|---|",
+        "| 段 | 起止（秒） | 响度 dB | 频谱重心 Hz |",
+        "|---|---|---|---|",
     ]
     for s in result["structure"]:
         lines.append(
             f"| {s['label']} | {s['start']} – {s['end']} | {s['loud_db']} "
-            f"| {s['brightness_hz']:.0f} | {s['chord_guess']} |"
+            f"| {s['brightness_hz']:.0f} |"
         )
+    lines += ["", "（每段的和弦见第 4 节。）"]
 
     lines += [
         "",
         "## 3. 时间线（8 秒粒度）",
         "",
-        "| 时间 | 和弦猜测 | 响度 dB | 频谱重心 Hz |",
+        "| 时间 | 主要音级 | 响度 dB | 频谱重心 Hz |",
         "|---|---|---|---|",
     ]
     for r in result["timeline"]:
@@ -197,9 +214,10 @@ def to_markdown(result: dict, path: str | Path) -> str:
 
     lines += [
         "",
-        "## 5. 情绪先验（启发式，低置信度）",
+        "## 5. 情绪先验（启发式）",
         "",
-        f"- 方法：`{md['method']}`，置信度 `{md['confidence']}`",
+        f"- 方法：`{md['method']}`，置信度 `{md['confidence']}`"
+        + ("，**输出已判为失效**" if md.get("saturated") else ""),
         f"- 唤醒度 {md['arousal']}，效价 {md['valence']} → {md['labels']}",
         f"- ⚠️ {md['caveat']}",
         "",
@@ -215,10 +233,14 @@ def to_markdown(result: dict, path: str | Path) -> str:
         "",
         "## 7. 已知限制",
         "",
-        "- **和弦猜测不可靠**：用 2 秒块音级能量猜三和弦，不分转位、不分大小调色彩。",
-        "- **结构检测依赖响度与音色变化**：没有做人声/伴奏分离时，靠旋律区分的主歌/副歌可能识别不出来。",
+        "- **和弦识别有误差**：HPCP + 三/七和弦模板 + Viterbi + 类别先验；"
+        "合成钢琴音频上根音约 74%，真实录音更低，转位与复杂和声容易判错。",
+        "- **调性只能到关系大小调二选一**：两者共享全部调内和弦，需人耳或旋律确认。",
+        "- **旋律提取不可用**：复调遮蔽下 RPA 约 20%，本项目不做旋律。",
+        "- **结构检测依赖响度与音色变化**：靠旋律区分的主歌/副歌可能识别不出来。",
         "- **人声频段占比是弱证据**：乐器也占这个频段。",
-        "- **情绪是猜测**：见第 4 节。",
+        "- **音符密度是相对起音率**，不是音符数；不同编配风格之间不能直接比较。",
+        "- **情绪先验是启发式**：只在校准范围内有意义，超出时已标记失效，见第 5 节。",
         "- 无歌词、无乐器识别、无年代/流派判断。",
         "",
         "## 8. 给解读模型的提示词",
