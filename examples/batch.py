@@ -20,6 +20,7 @@ from music_insight import audio, features as F, structure  # noqa: E402
 AUDIO_EXT = {".mp3", ".m4a", ".flac", ".wav", ".ogg", ".aac", ".wma"}
 
 COLUMNS = ["file", "duration_sec", "bpm", "key", "key_agree", "mode_agree", "tuning",
+           "krumhansl", "temperley", "bass_root",
            "key_corr", "loud_db", "crest_db", "brightness_hz", "segments", "top_chroma",
            "flip_05s", "note_density"]
 
@@ -50,6 +51,9 @@ def analyze_file(path: Path) -> dict:
         "key_agree": feat["key_agreement"],
         "mode_agree": feat["mode_agreement"],
         "tuning": feat["tuning_cents"],
+        "krumhansl": next((v["key"] for v in feat["key_votes"] if v["source"] == "krumhansl"), ""),
+        "temperley": next((v["key"] for v in feat["key_votes"] if v["source"] == "temperley"), ""),
+        "bass_root": next((v["key"] for v in feat["key_votes"] if v["source"] == "bass_root"), ""),
         "key_corr": feat["key_correlation"],
         "loud_db": feat["loudness_db"]["mean"],
         "crest_db": feat["crest_db"],
