@@ -30,6 +30,19 @@ def test_beat_sync_detection(tmp_path):
     assert len(result["beat_labels"]) == len(beat_times) - 1
     assert result["segments"]
     assert result["beat_centers"][0] > 0
+    vocabulary = {name for name, _ in zip(*[chords.build_templates()[0], range(100)])}
+    assert set(result["beat_labels"]).issubset(set(chords.build_templates()[0]))
+
+
+def test_quality_prior_weights_triads():
+    """先验应该让三和弦（无后缀）比七和弦更受偏好。"""
+    names, templates = chords.build_templates()
+    prior = chords._quality_log_prior(names)
+    triad = np.array([prior[i] for i, n in enumerate(names)
+                      if chords._quality_of(n) == ""])
+    seventh = np.array([prior[i] for i, n in enumerate(names)
+                        if chords._quality_of(n) in ("7", "m7", "maj7")])
+    assert triad.mean() > seventh.mean()
 
 
 def test_midi_render_roundtrip(tmp_path):

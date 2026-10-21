@@ -28,6 +28,22 @@ def _root_pc(name: str) -> int:
     return PITCH_NAMES.index(root)
 
 
+# 和弦性质先验：POP909 第 401–500 首的“持续时间加权”统计，
+# 与评测用的前 20 首不相交。归一化到本模块的 6 种性质。
+QUALITY_PRIORS = {"": 0.604, "m": 0.356, "7": 0.006, "m7": 0.018,
+                  "maj7": 0.010, "dim": 0.006}
+
+
+def _quality_of(name: str) -> str:
+    """'C#m7' → 'm7'；'C' → ''。"""
+    root_len = 2 if len(name) > 1 and name[1] == "#" else 1
+    return name[root_len:]
+
+
+def _quality_log_prior(names: list[str]) -> np.ndarray:
+    return np.log(np.array([QUALITY_PRIORS.get(_quality_of(n), 1e-4) for n in names]))
+
+
 def build_templates() -> tuple[list[str], np.ndarray]:
     names, rows = [], []
     for root in range(12):
@@ -63,6 +79,7 @@ def _viterbi(scores: np.ndarray, switch_penalty: float) -> np.ndarray:
 def detect_beat_sync(x: np.ndarray, sr: int, beat_times: np.ndarray,
                      switch_penalty: float = 0.5,
                      smooth_frames: int = 5,
+                     prior_weight: float = 0.3,
                      allowed: list[str] | None = None,
                      chroma_mode: str = "hpcp",
                      chroma_kwargs: dict | None = None) -> dict:
@@ -85,8 +102,8 @@ def detect_beat_sync(x: np.ndarray, sr: int, beat_times: np.ndarray,
     fps = sr / HPCP_HOP
     feats = []
     for a, b in zip(beat_times[:-1], beat_times[1:]):
-        i0 = int(a * fps)
-        i1 = max(i0 + 1, int(b * fps))
+        i0 = min(int(a * fps), hpcp.shape[1] - 1)
+        i1 = min(max(i0 + 1, int(b * fps)), hpcp.shape[1])
         seg = hpcp[:, i0:i1]
         f = seg.mean(axis=1) if seg.size else np.zeros(12)
         feats.append(f / (np.linalg.norm(f) + 1e-9))
@@ -102,6 +119,8 @@ def detect_beat_sync(x: np.ndarray, sr: int, beat_times: np.ndarray,
     scores = templates @ feats.T
     scores = (scores - scores.mean(axis=0, keepdims=True)) / (
         scores.std(axis=0, keepdims=True) + 1e-9)
+    if prior_weight:
+        scores = scores + prior_weight * _quality_log_prior(names)[:, None]
     path = _viterbi(scores, switch_penalty)
 
     centers = (beat_times[:-1] + beat_times[1:]) / 2
