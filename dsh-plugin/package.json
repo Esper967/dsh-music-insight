@@ -1,0 +1,23 @@
+{
+  "name": "dsh-music-insight",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Analyze local audio into an LLM-readable evidence pack (measurements, figures, report).",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

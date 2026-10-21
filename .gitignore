@@ -21,6 +21,9 @@ venv/
 panel.png
 *.json
 !examples/**/*.json
+# 插件清单与本地化文件是源码，必须提交（会被上面的 *.json 误伤）
+!dsh-plugin/package.json
+!dsh-plugin/locale/*.json
 
 # 临时实验脚本
 _*.py
