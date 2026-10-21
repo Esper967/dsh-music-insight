@@ -101,6 +101,30 @@ out/demo/
 - **无流派 / 年代 / 乐器识别**：需要另外的嵌入模型。
 - 纯音乐上歌词转写会产生幻觉，`--lyrics` 默认关闭且必须检查 `no_speech_prob`。
 
+## 作为 DeepSeek Harness 插件使用
+
+`dsh-plugin/` 是一个符合 DSH 的 Host 插件 bundle，注册一个 `music_insight` 工具：给一条音频路径，返回测量摘要与报告路径，全程本地。
+
+```bash
+# 在装有 DSH 的机器上
+dsh plugin --profile <你的 profile 名> add <本仓库路径>/dsh-plugin
+```
+
+也可以让 agent 调用 `plugin_manager` 的 `install_bundle`，target 填 `dsh-plugin` 的绝对路径。
+
+配置在 `dsh-plugin/cordis.patch.yml`：
+
+| 键 | 作用 |
+|---|---|
+| `pythonPath` | 装了 numpy + pillow（mp3 还需 av）的 Python；留空用 PATH 上的 `python` |
+| `repoRoot` | music-insight 仓库路径；插件在仓库内时自动推导 |
+| `defaultChords` | 是否默认跑节拍/和弦（默认 true） |
+
+工具参数：`file_path`（必需，相对路径按会话工作目录解析）、`chords`（覆盖默认值）。
+返回：一段摘要，外加 `report.md` / `analysis.json` / `panel.png` 的绝对路径。
+
+已验证：WAV（标准库解码）与 MP3（PyAV）都能跑通。
+
 ## 测试
 
 ```bash

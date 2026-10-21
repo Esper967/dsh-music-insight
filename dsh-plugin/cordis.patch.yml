@@ -1,0 +1,17 @@
+# dsh-music-insight bundle: mounts one Host plugin that registers the
+# music_insight model-facing tool.
+#
+# Install with the absolute path of THIS directory, e.g.
+#   dsh plugin --profile <name> add <repo>/dsh-plugin
+#
+# pythonPath: Python with numpy + pillow (and av for mp3/m4a/flac).
+#   Leave empty to use `python` from PATH.
+# repoRoot: music-insight checkout. Omitted here because the plugin derives it
+#   from its own location when this directory sits inside the repo.
+- insert:
+    - id: music-insight
+      name: dsh-music-insight
+      config:
+        pythonPath: ''
+        timeoutMs: 180000
+        defaultChords: true

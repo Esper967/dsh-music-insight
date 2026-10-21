@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Music Insight">
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="#1f2937"/>
+  <g fill="none" stroke="#7dd3fc" stroke-width="4" stroke-linecap="round">
+    <path d="M14 34v-6"/>
+    <path d="M22 42V22"/>
+    <path d="M30 38V26"/>
+    <path d="M38 46V18"/>
+    <path d="M46 36v-8"/>
+    <path d="M54 32v-2"/>
+  </g>
+</svg>
