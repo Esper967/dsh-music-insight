@@ -21,6 +21,12 @@ QUALITIES: list[tuple[str, tuple[int, ...], tuple[float, ...], str]] = [
 ]
 
 
+def _root_pc(name: str) -> int:
+    """'C#m7' → 1。"""
+    root = name[:2] if len(name) > 1 and name[1] == "#" else name[:1]
+    return PITCH_NAMES.index(root)
+
+
 def build_templates() -> tuple[list[str], np.ndarray]:
     names, rows = [], []
     for root in range(12):
@@ -56,12 +62,14 @@ def _viterbi(scores: np.ndarray, switch_penalty: float) -> np.ndarray:
 def detect(x: np.ndarray, sr: int, min_duration: float = 0.4,
            switch_penalty: float = 0.50, bass_bonus: float = 0.0,
            bass_range: tuple[float, float] = (70.0, 300.0),
-           smooth_frames: int = 5) -> dict:
+           smooth_frames: int = 5,
+           allowed: list[str] | None = None) -> dict:
     """返回逐帧标注与合并后的和弦段。
 
     bass_bonus > 0 时，用低频（默认 70–300 Hz）音级给“根音”加分，
     用来抑制转位/低音进行造成的根音误判。
     smooth_frames > 0 时对 HPCP 做时间中值滤波，抑制琶音与短音造成的抖动。
+    allowed 非空时只在给定的和弦集合里选（用于调内约束实验）。
     """
     S = stft(x, n_fft=HPCP_FFT, hop=HPCP_HOP)
     tuning = estimate_tuning(S, sr, HPCP_FFT)
@@ -76,6 +84,11 @@ def detect(x: np.ndarray, sr: int, min_duration: float = 0.4,
         hpcp = hpcp / (np.linalg.norm(hpcp, axis=0, keepdims=True) + 1e-9)
 
     names, templates = build_templates()
+    if allowed:
+        keep = [i for i, n in enumerate(names) if n in set(allowed)]
+        if keep:
+            names = [names[i] for i in keep]
+            templates = templates[keep]
     scores = templates @ hpcp                      # (n_chords, n_frames)
 
     if bass_bonus > 0:
@@ -89,7 +102,7 @@ def detect(x: np.ndarray, sr: int, min_duration: float = 0.4,
             if sel.any():
                 bass[k] = S[low][sel].mean(axis=0)
         bass /= bass.sum(axis=0, keepdims=True) + 1e-9
-        roots = np.array([i % 12 for i in range(len(names))])
+        roots = np.array([_root_pc(n) for n in names])
         scores = scores + bass_bonus * bass[roots]
 
     path = _viterbi(scores, switch_penalty)
