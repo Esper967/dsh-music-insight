@@ -121,7 +121,7 @@ out/demo/
 
 ## Roadmap
 
-1. demucs 人声/伴奏分离 → 结构检测改用旋律与和声变化
+1. 旋律/伴奏分离（dominant melody extraction；demucs 已试验并否决）→ 结构检测改用旋律与和声变化
 2. 和弦识别升级（模板匹配 / essentia）
 3. CLAP 或 MERT 嵌入 → 流派与情绪标签（有监督、可评估）
 4. 基线数字与评估脚本进仓库
