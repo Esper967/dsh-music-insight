@@ -9,6 +9,7 @@ import numpy as np
 
 from .dsp import PITCH_NAMES, stft
 from .keydetect import HPCP_FFT, HPCP_HOP, _hpcp, estimate_tuning
+from .salience import salience_chroma
 
 # (quality 后缀, 音程, 权重)：根音最强，五音次之，三音再次
 QUALITIES: list[tuple[str, tuple[int, ...], tuple[float, ...], str]] = [
@@ -59,11 +60,76 @@ def _viterbi(scores: np.ndarray, switch_penalty: float) -> np.ndarray:
     return np.array(path[::-1])
 
 
+def detect_beat_sync(x: np.ndarray, sr: int, beat_times: np.ndarray,
+                     switch_penalty: float = 0.5,
+                     smooth_frames: int = 5,
+                     allowed: list[str] | None = None,
+                     chroma_mode: str = "hpcp",
+                     chroma_kwargs: dict | None = None) -> dict:
+    """按拍聚合的和弦识别（beat-synchronous）。
+
+    逐帧 chroma 会被琶音、经过音打散；POP909 的钢琴编曲尤其如此。
+    先把每拍内的 chroma 取平均，再做 Viterbi，并对发射分数按拍标准化
+    （不同曲目的余弦分数尺度不同，不标准化会让转移惩罚失效）。
+
+    beat_times 需要单调递增，最后可以多给一个结束时间。
+    """
+    S = stft(x, n_fft=HPCP_FFT, hop=HPCP_HOP)
+    if chroma_mode == "salience":
+        hpcp, _, tuning = salience_chroma(
+            x, sr, n_fft=HPCP_FFT * 2, hop=HPCP_HOP, **(chroma_kwargs or {}))
+    else:
+        tuning = estimate_tuning(S, sr, HPCP_FFT)
+        hpcp = _hpcp(S, sr, tuning, HPCP_FFT)
+
+    fps = sr / HPCP_HOP
+    feats = []
+    for a, b in zip(beat_times[:-1], beat_times[1:]):
+        i0 = int(a * fps)
+        i1 = max(i0 + 1, int(b * fps))
+        seg = hpcp[:, i0:i1]
+        f = seg.mean(axis=1) if seg.size else np.zeros(12)
+        feats.append(f / (np.linalg.norm(f) + 1e-9))
+    feats = np.array(feats)
+
+    names, templates = build_templates()
+    if allowed:
+        keep = [i for i, n in enumerate(names) if n in set(allowed)]
+        if keep:
+            names = [names[i] for i in keep]
+            templates = templates[keep]
+
+    scores = templates @ feats.T
+    scores = (scores - scores.mean(axis=0, keepdims=True)) / (
+        scores.std(axis=0, keepdims=True) + 1e-9)
+    path = _viterbi(scores, switch_penalty)
+
+    centers = (beat_times[:-1] + beat_times[1:]) / 2
+    labels = [names[i] for i in path]
+    segments = []
+    for i, lab in enumerate(labels):
+        if segments and segments[-1]["chord"] == lab:
+            segments[-1]["end"] = round(float(beat_times[i + 1]), 2)
+        else:
+            segments.append({"start": round(float(beat_times[i]), 2),
+                             "end": round(float(beat_times[i + 1]), 2), "chord": lab})
+    return {
+        "tuning_cents": tuning,
+        "beat_times": beat_times,
+        "beat_centers": centers,
+        "beat_labels": labels,
+        "segments": segments,
+        "n_segments": len(segments),
+    }
+
+
 def detect(x: np.ndarray, sr: int, min_duration: float = 0.4,
            switch_penalty: float = 0.50, bass_bonus: float = 0.0,
            bass_range: tuple[float, float] = (70.0, 300.0),
            smooth_frames: int = 5,
-           allowed: list[str] | None = None) -> dict:
+           allowed: list[str] | None = None,
+           chroma_mode: str = "hpcp",
+           chroma_kwargs: dict | None = None) -> dict:
     """返回逐帧标注与合并后的和弦段。
 
     bass_bonus > 0 时，用低频（默认 70–300 Hz）音级给“根音”加分，
@@ -72,8 +138,12 @@ def detect(x: np.ndarray, sr: int, min_duration: float = 0.4,
     allowed 非空时只在给定的和弦集合里选（用于调内约束实验）。
     """
     S = stft(x, n_fft=HPCP_FFT, hop=HPCP_HOP)
-    tuning = estimate_tuning(S, sr, HPCP_FFT)
-    hpcp = _hpcp(S, sr, tuning, HPCP_FFT)
+    if chroma_mode == "salience":
+        hpcp, _, tuning = salience_chroma(
+            x, sr, n_fft=HPCP_FFT * 2, hop=HPCP_HOP, **(chroma_kwargs or {}))
+    else:
+        tuning = estimate_tuning(S, sr, HPCP_FFT)
+        hpcp = _hpcp(S, sr, tuning, HPCP_FFT)
 
     if smooth_frames > 1:
         k = smooth_frames

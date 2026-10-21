@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import numpy as np
+
 from music_insight import chords, midi_render, synth
 
 
@@ -14,6 +16,20 @@ def test_chords_on_synth_loop(tmp_path):
     assert len(result["frame_labels"]) > 10
     assert result["segments"]
     assert all("chord" in s for s in result["segments"])
+
+
+def test_beat_sync_detection(tmp_path):
+    wav = tmp_path / "loop.wav"
+    synth.synth_demo(str(wav), bpm=100.0, bars=4)
+
+    from music_insight import audio
+    samples, sr = audio.load_audio(wav)
+    beat_times = np.arange(0.0, len(samples) / sr, 0.6)  # 100 BPM
+    result = chords.detect_beat_sync(samples, sr, beat_times)
+
+    assert len(result["beat_labels"]) == len(beat_times) - 1
+    assert result["segments"]
+    assert result["beat_centers"][0] > 0
 
 
 def test_midi_render_roundtrip(tmp_path):
