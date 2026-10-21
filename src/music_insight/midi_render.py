@@ -11,8 +11,8 @@ import numpy as np
 SR_DEFAULT = 22050
 
 
-def render_midi(path: str, sr: int = SR_DEFAULT) -> tuple[np.ndarray, float]:
-    """返回 (音频, 时长秒)。"""
+def render_midi(path: str, sr: int = SR_DEFAULT, track_name: str | None = None) -> tuple[np.ndarray, float]:
+    """返回 (音频, 时长秒)。track_name 非空时只渲染名字匹配的轨（如 'MELODY'）。"""
     import pretty_midi
 
     pm = pretty_midi.PrettyMIDI(path)
@@ -22,6 +22,8 @@ def render_midi(path: str, sr: int = SR_DEFAULT) -> tuple[np.ndarray, float]:
 
     for inst in pm.instruments:
         if inst.is_drum:
+            continue
+        if track_name and track_name.lower() not in (inst.name or "").lower():
             continue
         for note in inst.notes:
             start = int(note.start * sr)
