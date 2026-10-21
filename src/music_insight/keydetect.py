@@ -80,6 +80,33 @@ def _rank(profile_pairs, feature: np.ndarray, top: int = 3) -> list[tuple[str, s
     return scores[:top]
 
 
+def ending_tonic(x: np.ndarray, sr: int, tuning_cents: float) -> dict:
+    """用结尾段的和弦判断调式：作品通常结束在主和弦上。
+
+    这是专治“关系大小调混淆”的信源——两者共享音级，靠结尾三和弦的大/小三度区分。
+    """
+    tail = x[int(len(x) * 0.9):] if len(x) > sr * 10 else x[-int(sr * 5):]
+    if tail.size < 2048:
+        tail = x[-2048:]
+    S = stft(tail, n_fft=HPCP_FFT, hop=HPCP_HOP)
+    hpcp = _hpcp(S, sr, tuning_cents, HPCP_FFT).mean(axis=1)
+    hpcp = hpcp / (np.linalg.norm(hpcp) + 1e-9)
+
+    ranked = []
+    for root in range(12):
+        for mode, intervals, weights in (("maj", (0, 4, 7), (1.0, 0.9, 0.8)),
+                                         ("min", (0, 3, 7), (1.0, 0.9, 0.8))):
+            score = sum(float(hpcp[(root + iv) % 12]) * w for iv, w in zip(intervals, weights))
+            ranked.append((PITCH_NAMES[root], mode, score))
+    ranked.sort(key=lambda v: v[2], reverse=True)
+    return {
+        "source": "ending_tonic",
+        "key": f"{ranked[0][0]} {'大调' if ranked[0][1] == 'maj' else '小调'}",
+        "score": round(ranked[0][2], 3),
+        "candidates": [f"{r[0]} {'大调' if r[1] == 'maj' else '小调'} {r[2]:.3f}" for r in ranked[:3]],
+    }
+
+
 def detect(x: np.ndarray, sr: int) -> dict:
     """多源调性估计。返回每个源的投票 + 一致性。"""
     S = stft(x, n_fft=HPCP_FFT, hop=HPCP_HOP)
@@ -129,6 +156,8 @@ def detect(x: np.ndarray, sr: int) -> dict:
         "candidates": [f"{r[0]} {'大调' if r[1] == 'maj' else '小调'} {r[2]:.3f}"
                        for r in bass_scores[:3]],
     })
+
+    votes.append(ending_tonic(x, sr, tuning))
 
     names = [v["key"] for v in votes]
     agree = max(names.count(n) for n in set(names)) / len(names)
