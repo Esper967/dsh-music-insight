@@ -127,7 +127,7 @@ def to_markdown(result: dict, path: str | Path) -> str:
         "|---|---|",
         f"| 时长 | {m['duration_sec']} 秒 |",
         f"| 速度 | {m['bpm']} BPM |",
-        f"| 调性 | {m['key']}（相关 {m['key_correlation']}，候选间隔 {m.get('key_margin', '-')}） |",
+        f"| 调性 | {m['key']}（多源一致度 {m.get('key_agreement', '-')}，间隔 {m.get('key_margin', '-')}） |",
         f"| 平均响度 | {m['loudness_db']['mean']} dB（{m['loudness_db']['min']} ~ {m['loudness_db']['max']}） |",
         f"| 峰值相对电平 | {m['crest_db']} dB |",
         f"| 音符密度 | {m['note_density_per_sec']}/s |",
@@ -135,15 +135,20 @@ def to_markdown(result: dict, path: str | Path) -> str:
         f"| 人声频段占比 | {m['vocal_band_ratio']:.0%}（弱证据） |",
         "",
     ]
-    candidates = m.get("key_candidates") or []
-    if candidates:
-        rendered = " / ".join(f"{c['key']} {c['corr']}" for c in candidates)
-        lines.append(f"调性候选：{rendered}")
+    votes = m.get("key_votes") or []
+    if votes:
+        lines += ["多源调性投票（一致度 %s，大小调一致度 %s，调音偏移 %s 音分）："
+                  % (m.get("key_agreement"), m.get("mode_agreement"), m.get("tuning_cents")),
+                  "", "| 信息源 | 结论 | 相关度 | 候选间隔 |", "|---|---|---|---|"]
+        for v in votes:
+            lines.append(f"| {v['source']} | {v['key']} | {v['score']} | {v.get('margin', '-')} |")
         lines.append("")
-    if m.get("key_margin") is not None and m["key_margin"] < 0.06:
+    if (m.get("key_agreement") is not None and m["key_agreement"] < 1.0) or \
+            (m.get("mode_agreement") is not None and m["mode_agreement"] < 1.0) or \
+            (m.get("key_margin") is not None and m["key_margin"] < 0.06):
         lines += [
-            f"> ⚠️ 调性候选间隔只有 {m['key_margin']}，这个结论不可靠。"
-            "F 大调 / A 小调这类共享 6 个音级的调，chroma 方法会来回摇。",
+            "> ⚠️ 三个信息源没有完全一致，或候选间隔过小：这条调性结论不可靠。"
+            "最常见的混淆是关系大小调（如 F 大调 / D 小调、D 大调 / B 小调）。",
             "",
         ]
     lines += [

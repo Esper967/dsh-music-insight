@@ -8,26 +8,15 @@ from __future__ import annotations
 
 import numpy as np
 
-N_FFT = 2048
-HOP = 512
+from .dsp import HOP, N_FFT, PITCH_NAMES, stft  # noqa: F401 - 供其他模块复用
+from . import keydetect
+
 N_MELS = 64
 FMIN, FMAX = 30.0, 8000.0
-PITCH_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 # Krumhansl-Kessler 调性轮廓（近似值，仅用于相对相关比较）
 _MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
 _MINOR = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
-
-
-def stft(x: np.ndarray, n_fft: int = N_FFT, hop: int = HOP) -> np.ndarray:
-    """幅度谱，(freqs, frames)，float32。"""
-    win = np.hanning(n_fft).astype(np.float32)
-    if len(x) < n_fft:
-        x = np.pad(x, (0, n_fft - len(x)))
-    n_frames = 1 + (len(x) - n_fft) // hop
-    idx = np.arange(n_fft)[None, :] + hop * np.arange(n_frames)[:, None]
-    frames = x[idx] * win
-    return np.abs(np.fft.rfft(frames, axis=1)).astype(np.float32).T
 
 
 def mel_filterbank(sr: int, n_fft: int = N_FFT, n_mels: int = N_MELS,
@@ -156,9 +145,7 @@ def extract(x: np.ndarray, sr: int) -> dict:
     cent = spectral_centroid(S, sr)
     flux = onset_flux(logmel)
     mean_chroma = ch.mean(axis=1)
-    candidates = key_candidates(mean_chroma, 3)
-    key_name, key_corr = candidates[0]
-    key_margin = round(candidates[0][1] - candidates[1][1], 3) if len(candidates) > 1 else 0.0
+    key_info = keydetect.detect(x, sr)
     loud = loudness_curve(x)
     rms_dbfs = 20 * np.log10(np.sqrt(np.mean(x ** 2)) + 1e-9)
 
@@ -166,10 +153,14 @@ def extract(x: np.ndarray, sr: int) -> dict:
         "sample_rate": sr,
         "duration_sec": round(len(x) / sr, 2),
         "bpm": round(tempo(flux, sr), 1),
-        "key": key_name,
-        "key_correlation": key_corr,
-        "key_margin": key_margin,
-        "key_candidates": [{"key": n, "corr": s} for n, s in candidates],
+        "key": key_info["key"],
+        "key_correlation": key_info["key_score"],
+        "key_margin": key_info["key_margin"],
+        "key_candidates": key_info["key_candidates"],
+        "key_votes": key_info["key_votes"],
+        "key_agreement": key_info["key_agreement"],
+        "mode_agreement": key_info["mode_agreement"],
+        "tuning_cents": key_info["tuning_cents"],
         "loudness_db": {
             "mean": round(float(rms_dbfs), 1),
             "min": round(float(loud.min()), 1),
