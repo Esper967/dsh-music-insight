@@ -80,7 +80,8 @@ def evidence_index(feat: dict, struct: dict) -> list[dict]:
          f"{feat['loudness_db']['min']} ~ {feat['loudness_db']['max']} dB"),
         ("峰值相对电平", "crest_db", f"{feat['crest_db']} dB"),
         ("音符密度", "note_density_per_sec", f"{feat['note_density_per_sec']}/s"),
-        ("人声频段占比", "vocal_band_ratio", f"{feat['vocal_band_ratio']:.0%}（弱证据）"),
+        ("中频带能量占比", "mid_band_ratio",
+         f"{feat['mid_band_ratio']:.0%}（音色描述，与人声无关）"),
         ("主要音级", "mean_chroma_top3", " / ".join(feat["mean_chroma_top3"])),
         ("段落数", "segments", f"{len(struct['segments'])} 段"),
     ]
@@ -126,6 +127,8 @@ LLM_PROMPT = """你是音乐分析助手。下面是一首歌的**测量证据**
 2. 只使用证据里出现过的数据，不要补充证据之外的细节（乐器、歌词、年代）。
 3. 情绪部分只能引用 mood_priors，并明确标注它是低置信度的启发式猜测。
 4. 证据不足时直接说“无法从当前证据判断”。
+5. 证据里没有任何人声或乐器判断：mid_band_ratio 只是能量分布，纯器乐也能很高，
+   禁止据此推断“有人声演唱”“人声频段占满”之类结论。
 """
 
 
@@ -148,7 +151,7 @@ def to_markdown(result: dict, path: str | Path) -> str:
         f"| 峰值相对电平 | {m['crest_db']} dB |",
         f"| 音符密度 | {m['note_density_per_sec']}/s |",
         f"| 主要音级 | {' / '.join(m['mean_chroma_top3'])} |",
-        f"| 人声频段占比 | {m['vocal_band_ratio']:.0%}（弱证据） |",
+        f"| 中频带能量占比 | {m['mid_band_ratio']:.0%}（300~3000 Hz，音色描述，与人声无关） |",
         "",
     ]
     votes = m.get("key_votes") or []
@@ -238,7 +241,9 @@ def to_markdown(result: dict, path: str | Path) -> str:
         "- **调性只能到关系大小调二选一**：两者共享全部调内和弦，需人耳或旋律确认。",
         "- **旋律提取不可用**：复调遮蔽下 RPA 约 20%，本项目不做旋律。",
         "- **结构检测依赖响度与音色变化**：靠旋律区分的主歌/副歌可能识别不出来。",
-        "- **人声频段占比是弱证据**：乐器也占这个频段。",
+        "- **不判断有没有人声、也不识别乐器**：中频带能量占比只是 300~3000 Hz 的"
+        "能量分布，在本仓库 18 首纯器乐样本（无人声）上取值为 27.7%~82.3%，"
+        "与频谱重心相关 r=-0.91——纯钢琴曲同样能到 80%+。它不能作为人声证据。",
         "- **音符密度是相对起音率**，不是音符数；不同编配风格之间不能直接比较。",
         "- **情绪先验是启发式**：只在校准范围内有意义，超出时已标记失效，见第 5 节。",
         "- 无歌词、无乐器识别、无年代/流派判断。",

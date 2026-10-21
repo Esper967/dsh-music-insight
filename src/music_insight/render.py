@@ -100,7 +100,7 @@ def figure(feat: dict, struct: dict, audio: np.ndarray, out_path: str | Path) ->
 
     draw.text((26, 772),
               f"峰值相对电平 {feat['crest_db']} dB · 音符密度 {feat['note_density_per_sec']}/s"
-              f" · 人声频段占比 {feat['vocal_band_ratio']:.0%}（弱证据）",
+              f" · 中频带能量占比 {feat['mid_band_ratio']:.0%}（音色描述，非人声判断）",
               font=f_label, fill=MUTE)
 
     out_path = Path(out_path)

@@ -154,8 +154,13 @@ def band_energy(S: np.ndarray, sr: int, lo: float, hi: float,
     return np.log1p(S[sel].mean(axis=0) * 1e3) if sel.any() else np.zeros(S.shape[1], np.float32)
 
 
-def vocal_band_ratio(S: np.ndarray, sr: int, n_fft: int = N_FFT) -> float:
-    """300~3000 Hz 能量占比。人声主要落在这里，但乐器也在这里——只能当弱证据。"""
+def mid_band_ratio(S: np.ndarray, sr: int, n_fft: int = N_FFT) -> float:
+    """300~3000 Hz 能量占比：纯音色描述量，不能用来判断有没有人声。
+
+    它只是“亮度”的另一种写法：在本仓库 18 首**纯器乐**样本（无人声）上取值
+    27.7%~82.3%，与频谱重心的相关系数 -0.91。钢琴、弦乐这类中频密集的编配
+    照样能到 80%+，所以不要把它当成人声证据。
+    """
     bins = np.fft.rfftfreq(n_fft, 1 / sr)
     vocal = S[(bins >= 300) & (bins < 3000)].sum()
     total = S.sum() + 1e-9
@@ -194,7 +199,7 @@ def extract(x: np.ndarray, sr: int) -> dict:
         },
         "crest_db": round(float(rms_dbfs - 20 * np.log10(np.max(np.abs(x)) + 1e-9)), 1),
         "note_density_per_sec": onset_rate(flux, sr),
-        "vocal_band_ratio": round(vocal_band_ratio(S, sr), 3),
+        "mid_band_ratio": round(mid_band_ratio(S, sr), 3),
         "mean_chroma_top3": [PITCH_NAMES[i] for i in np.argsort(mean_chroma)[::-1][:3]],
         "_S": S, "_logmel": logmel, "_chroma": ch, "_centroid": cent,
         "_flux": flux, "_loud": loud,
