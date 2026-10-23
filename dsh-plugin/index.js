@@ -61,72 +61,75 @@ function summarizeStrict(analysis, outDir) {
   }
 
   if (analysis.chords?.n_segments) lines.push(`和弦段数：${analysis.chords.n_segments}`);
+
+  lines.push("（歌名/歌手只是文件标签，可能不准；不要搜索、不要引用网络信息。）");
+
   if (outDir) lines.push(`输出目录：${outDir}`);
   return lines.join("\n");
 }
 
 /**
- * vibe：模型拿到就能说感受的底稿。
+ * vibe：一句感受 + 三个词 + 一行走向。
  *
- * 顺序是刻意的——先元信息、再一句话、再骨架、最后才是数字。
- * 模型读到的第一样东西决定它的语气。
+ * v2 刻意压短：模型读到的第一样东西决定它的语气——给它一屏，它就写一屏；
+ * 给它一句，它就写一句。
  */
 function summarizeVibe(analysis, outDir) {
   const m = analysis.measurements ?? {};
   const meta = analysis.meta ?? {};
   const v = analysis.vibe ?? {};
+
   const dur = Number(m.duration_sec) || 0;
   const durText = dur < 60
     ? `${Math.round(dur)} 秒`
     : `${Math.floor(dur / 60)} 分 ${Math.round(dur % 60)} 秒`;
-  const facts = [durText, `${m.bpm ?? "?"} BPM`, m.key ?? "?"];
-  if (meta.album) facts.push(`专辑 ${meta.album}`);
-  if (meta.year) facts.push(meta.year);
-  if (meta.genre) facts.push(`流派标签 ${meta.genre}`);
+  const title = meta.title ? `《${meta.title}》` : "这首";
+  const who = meta.artist ? `${title} — ${meta.artist}` : title;
 
-  const lines = [];
-  if (meta.title) {
-    lines.push(meta.artist ? `《${meta.title}》— ${meta.artist}` : `《${meta.title}》`);
-  }
-  lines.push(facts.join(" · "));
-  if (v.one_liner) lines.push(`一句话：${v.one_liner}`);
+  const lines = [`${who} · ${durText} · ${m.bpm ?? "?"} BPM · ${m.key ?? "?"}`];
+  if (v.headline) lines.push(v.headline);
+  if (v.feelings?.length) lines.push(v.feelings.join(" / "));
+  if (v.arc_line) lines.push(`走向：${v.arc_line}`);
+  if (v.hand_line) lines.push(v.hand_line);
 
-  if (v.arc?.length) {
-    lines.push("");
-    lines.push("它怎么走的：");
-    for (const seg of v.arc) {
-      const t = `${fmtTime(seg.start)}–${fmtTime(seg.end)}`;
-      lines.push(`  ${t.padEnd(11)} ${seg.phase ?? ""}  ${seg.loud_db}dB  ` +
-        `${Math.round(seg.brightness_hz)}Hz  ${seg.word ?? ""}`);
-    }
-    if (v.grain === "timeline") lines.push("  （结构检测没抓到边界，按 8 秒时间线讲）");
-  }
-
-  if (v.hand) {
-    lines.push("");
-    lines.push(`手感：速度 ${v.hand.tempo} ｜ 明暗 ${v.hand.light} ｜ ` +
-      `密度 ${v.hand.density} ｜ 温度 ${v.hand.warmth} ｜ 长度 ${v.hand.length}`);
-  }
-  if (v.tags?.length) lines.push(`标签：${v.tags.join(" / ")}`);
-
-  if (v.anchors?.length) {
-    lines.push("");
-    lines.push("可以拿去用的锚点（带数字，说的是感觉）：");
-    for (const a of v.anchors) lines.push(`  · ${a}`);
-  }
-
-  // 和弦：给一句，别把时间线全倒给模型。
-  const kfc = analysis.key_from_chords;
+  // 可引用的专业面：调性 / 和弦 / 关键时间点。让模型能像懂行的朋友那样顺口带一句。
   lines.push("");
+  lines.push(`数据：${m.key ?? "?"} · ${m.bpm ?? "?"} BPM · 平均 ${m.loudness_db?.mean ?? "?"} dB`);
+  const kfc = analysis.key_from_chords;
   if (kfc?.top_chords?.length) {
-    lines.push(`和弦：${kfc.top_chords.join(" / ")}` +
-      (kfc.ambiguous_relative ? `（调性 ${kfc.key} / ${kfc.relative_pair?.[1] ?? "?"} 二选一）` : `（${kfc.key}）`));
-  } else if (m.mean_chroma_top3?.length) {
-    lines.push(`主要音级：${m.mean_chroma_top3.join(" / ")}`);
+    const amb = kfc.ambiguous_relative
+      ? `（${kfc.key} / ${kfc.relative_pair?.[1] ?? "?"} 二选一）`
+      : `（${kfc.key}）`;
+    lines.push(`和弦：${kfc.top_chords.slice(0, 4).join(" / ")}${amb}`);
   }
-  if (analysis.chords?.n_segments) lines.push(`和弦段数：${analysis.chords.n_segments}`);
+  const segs = analysis.structure ?? [];
+  if (segs.length) {
+    const peak = segs.reduce((best, s) => (s.loud_db > best.loud_db ? s : best), segs[0]);
+    const mid = segs[Math.floor(segs.length / 2)];
+    const candidates = [segs[0], peak, segs[segs.length - 1]];
+    if (new Set(candidates.map((s) => `${s.start}`)).size < 3 && segs.length > 2) {
+      candidates.push(mid);
+    }
+    const seen = new Set();
+    const points = candidates
+      .filter(Boolean)
+      .filter((s) => {
+        const key = `${s.start}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => a.start - b.start)
+      .slice(0, 3)
+      .map((s) => `${fmtTime(s.start)} ${s.loud_db}dB`);
+    lines.push(`关键点：${points.join(" → ")}`);
+  }
 
-  if (outDir) lines.push(`输出目录：${outDir}`);
+  lines.push("");
+  lines.push("（歌名/歌手只是文件标签，可能不准。不要搜索、不要引用任何网络信息，" +
+    "只按上面的感受说。可以顺口带 1 处数据，像懂行的朋友，不要报参数。）");
+
+  if (outDir) lines.push(`\n输出目录：${outDir}`);
   return lines.join("\n");
 }
 
@@ -182,14 +185,19 @@ export function apply(ctx, rawConfig) {
   const tool = {
     name: "music_insight",
     description:
-      "听完一首歌的「感官底稿」：把本地音频测一遍（时长、BPM、调性、响度起伏、明暗、结构，可选和弦），" +
-      "再翻译成骨架和听感——哪里薄、哪里涨满、怎么散掉，附上歌名/歌手/专辑。 " +
-      "拿到结果后请**先用第一人称说你听完的感受**（可以比喻、可以联想歌名和画面），" +
-      "数字是给你撑感觉用的，不必逐个报、更不要说“根据测量数据”。 " +
+      "听完一首歌的「一句感受」：分析本地音频（时长、BPM、调性、响度起伏、明暗、结构，可选和弦），" +
+      "压成一句感受 + 三个情绪词 + 一行走向。全程离线，不联网、不取任何评论。 " +
+      "**歌名/歌手只是文件标签，可能不准**；不要搜索、不要调用联网工具、不要引用网络上的评论或歌词，" +
+      "只按返回的感受说话。 " +
+      "回答方式：2–4 句、总共不超过 100 字。第一句直接说感觉，像普通人；" +
+      "**但要有 1 处具体数据**：时间点（1:34 那段）、数字（最满 -20 dB）、调性（C 大调 / A 小调）" +
+      "或和弦（一直绕着 C-F-G）——像懂行的朋友顺口带过，不是报参数；最多 2 个数据点、1 个术语。" +
+      "情绪直接说出来（闷 / 空 / 松 / 想哭 / 上头 / 没感觉），再补一个具体的：哪一段、什么时候听的、身体反应。" +
+      "不要写总结、不要分点、不要排比、不要“总的来说/氛围/张力/层次”这类词；不确定就说“好像/说不上来”。 " +
+      "需要可引用的证据清单时传 mode=\"strict\"。 " +
       "同时写出 report.md / panel.png / LIMITS.md 等文件并返回路径。 " +
-      "mode=\"strict\" 返回可引用的证据清单（核对/评估时用），默认 vibe。 " +
-      "这是确定性测量，不是音乐理解模型：旋律、人声、乐器都不在证据里，要猜请标明是猜。" +
-      "Runs offline on the Host; WAV decodes with the standard library, and mp3/m4a/flac need PyAV in the configured Python.",
+      "这是确定性测量，不是音乐理解模型：旋律、人声、乐器都不在证据里，要猜请标明是猜。 " +
+      "Runs offline on the Host; WAV decodes with the standard library, mp3/m4a/flac need PyAV.",
     parameters: {
       type: "object",
       properties: {
@@ -201,7 +209,7 @@ export function apply(ctx, rawConfig) {
           type: "string",
           enum: ["vibe", "strict"],
           description:
-            "vibe（默认）：先说听感、数字压后，给“听完想说点什么”的场景。" +
+            "vibe（默认）：一句感受 + 三个词 + 一行走向。" +
             "strict：可引用的证据清单，给核对/评估用。",
         },
         chords: {
@@ -235,7 +243,8 @@ export function apply(ctx, rawConfig) {
       const requestedDir = typeof args?.output_dir === "string" ? args.output_dir.trim() : "";
       const { dir: outDir, cleanup } = await resolveOutDir(target, requestedDir, cwd, config.outputSuffix);
 
-      const argv = [python, "-m", "music_insight.cli", target, "--out", outDir, "--quiet", "--mode", mode];
+      const argv = [python, "-m", "music_insight.cli", target, "--out", outDir,
+        "--quiet", "--mode", mode];
       if (withChords) argv.push("--chords");
 
       let outcome;

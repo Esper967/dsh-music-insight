@@ -1,18 +1,20 @@
-"""感官层：把测量值翻译成「像听过」的话。
+"""感官层：把测量值翻译成「一句话的感受」。
 
-证据层（``measurements`` / ``evidence``）负责**真**：每个数字可复现、能回溯字段。
-感官层负责**好听**：把数字映射成形容词和叙事弧，下游模型就不用自己从
-「-20.8 dB / 频谱重心 2682 Hz」翻译到「雨后的薄雾」。
+v2 的方向变了：**短、直接、说情绪**。
 
-边界
-----
-- 只消费 ``features`` / ``structure`` / ``chords`` 已有字段，**不新增音频计算**
-  （零成本、可复现、可离线）。
-- 不做乐器 / 人声 / 流派判断——证据层没有的东西，这里也不许有。
-- 输出一律标记 ``method="vibe-v1"``。它是**约定俗成的映射，不是测量**；
-  要严谨引用请用 ``measurements`` / ``evidence``。
+v1 会输出骨架表、手感表、四五个「听感锚点」——信息全，但读起来像体检报告，
+模型接过去也只能继续写长。v2 只保留四样东西：
 
-一句话：这一层不发明事实，只发明措辞。
+    headline  一句感受（可以比喻，但只一句）
+    feelings  三个词
+    arc_line  一行走向
+    hand_line 一行手感
+
+其余细节留在 ``arc`` / ``hand`` 里给机器看，不往人眼前送。
+证据层（``measurements`` / ``evidence``）一个字没少——**短的是措辞，不是数据**。
+
+边界不变：只消费已有测量值，不新增音频计算，不判断乐器 / 人声 / 流派。
+输出标 ``method="vibe-v2"``：约定俗成的映射，不是测量。
 """
 
 from __future__ import annotations
@@ -20,8 +22,8 @@ from __future__ import annotations
 from pathlib import Path
 
 # --- 阈值表 ---------------------------------------------------------------
-# 每一项都是「某个测量值的分段 → 一句人话」。改这里就是改解读词。
-# 阈值取自本仓库 18 首真实纯音乐 + 合成样本的经验分布，不是校准过的心理量。
+# 每张表 =「测量值分段 → 一句人话」。改这里就是改解读词。
+# 长词用于报告/摘要，短词用于一行式的 feelings；两者同一套阈值。
 
 LOUD_STEPS = (
     (-30.0, "很轻"),
@@ -61,13 +63,36 @@ LENGTH_STEPS = (
     (1e9, "长"),
 )
 
+# 一行式短词（feelings / hand_line 用）
+SHORT_STEPS = {
+    "light": ((800.0, "闷"), (1300.0, "厚"), (2000.0, "平"), (3200.0, "亮"), (1e9, "很亮")),
+    "tempo": ((70.0, "慢"), (95.0, "偏慢"), (125.0, "稳"), (145.0, "偏快"), (1e9, "快")),
+    "density": ((1.2, "空"), (3.0, "铺"), (6.0, "密"), (1e9, "很密")),
+    "length": ((60.0, "短"), (150.0, "偏短"), (240.0, "正常"), (1e9, "长")),
+}
+
+# feelings 是「感受词」不是「音色词」：同样是亮，这里写「透」而不是「很亮」。
+# 和 SHORT_STEPS 分开，是因为 hand_line 要描述事实，feelings 要描述情绪。
+FEEL_STEPS = {
+    "light": ((800.0, "闷"), (1300.0, "沉"), (2000.0, "淡"), (3200.0, "透"), (1e9, "飘")),
+    "tempo": ((70.0, "拖"), (95.0, "缓"), (125.0, "稳"), (145.0, "轻快"), (1e9, "急")),
+    "density": ((1.2, "空"), (3.0, "松"), (6.0, "满"), (1e9, "挤")),
+}
+
 
 def _step(value: float, table) -> str:
-    """按上界查表；表最后一档用 1e9 兜底。"""
     for upper, word in table:
         if value <= upper:
             return word
     return table[-1][1]
+
+
+def _step_short(key: str, value: float) -> str:
+    return _step(value, SHORT_STEPS[key])
+
+
+def _feel_word(key: str, value: float) -> str:
+    return _step(value, FEEL_STEPS[key])
 
 
 # --- 元信息 ---------------------------------------------------------------
@@ -84,13 +109,12 @@ _TAG_ALIASES = {
 def _split_stem(stem: str) -> tuple[str, str]:
     """文件名兜底：「歌手 - 歌名」或「01. 歌名」。"""
     s = stem.strip()
-    # 去掉音轨号前缀：01 / 01. / 01- / [01]
     for prefix_len in (3, 2):
         head = s[:prefix_len]
         if head and head[0].isdigit() and s[prefix_len:prefix_len + 1] in (".", "-", " ", "_"):
             s = s[prefix_len + 1:].strip()
             break
-    if " - " in s:  # 注意是全角/半角无关的第一处
+    if " - " in s:
         artist, title = s.split(" - ", 1)
         return title.strip(), artist.strip()
     return s, ""
@@ -147,7 +171,7 @@ def read_metadata(path: str) -> dict:
 
 def _segment_word(rel_db: float, rel_bright: float, first: bool, last: bool,
                   phase: str) -> str:
-    """单段听感。参数都是**相对全曲均值**的偏差，避免不同母带的绝对电平差。"""
+    """单段听感（给 arc 细节用，不直接上摘要）。"""
     if first:
         if rel_db <= -3.0 and rel_bright > 200.0:
             return "薄薄一层，还没落地"
@@ -187,8 +211,18 @@ def _segment_word(rel_db: float, rel_bright: float, first: bool, last: bool,
     return "平着走"
 
 
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
 def _shape(louds: list[float]) -> str:
-    """把响度序列归类成一句「弧线」。基线用中位数，见 build() 里的说明。"""
+    """把响度序列归类成一句「弧线」。基线用中位数：长尾的安静段会把均值拖走。"""
     if len(louds) < 2:
         return "一条线走到底"
     mid = _median(louds)
@@ -212,7 +246,7 @@ def _shape(louds: list[float]) -> str:
 
 
 def _hand(measurements: dict) -> dict:
-    """手感：速度 / 明暗 / 密度 / 长度 / 温度。"""
+    """手感：速度 / 明暗 / 密度 / 长度 / 温度（长词版，给报告细节）。"""
     key = str(measurements.get("key", ""))
     warm = "偏暖" if key.endswith("大调") else ("偏冷" if key.endswith("小调") else "不好说")
     return {
@@ -226,88 +260,83 @@ def _hand(measurements: dict) -> dict:
     }
 
 
-def _tags(hand: dict, mood: dict, shape: str) -> list[str]:
-    """两三个标签，聊天时可以直接用。"""
+# --- 一句话：把骨架 + 手感压成感受 ---------------------------------------------
+
+_HEADLINES = {
+    "平铺": "一条直线，不哄你也不推你。",
+    "从空气里出来": "像雨停之后一个人走回家：先是空的，中间暖起来，最后散了。",
+    "一路往上": "像憋着一口气往上走，越到后面越开。",
+    "开得高": "一上来就给满，然后一路收着走。",
+    "慢慢淡出": "慢慢淡下去，像自己走远的。",
+    "起手很轻": "开头很轻，像还没决定要不要开始。",
+    "中间有起伏": "中间起起伏伏，像情绪一直没坐稳。",
+}
+
+
+def _mood_tail(mood: dict) -> str:
     arousal = float(mood.get("arousal") or 0.0)
     valence = float(mood.get("valence") or 0.0)
-    if arousal >= 0.55 and valence >= 0.55:
-        tags = ["偏亮", "有点上头"]
-    elif arousal >= 0.55:
-        tags = ["紧", "有压迫感"]
-    elif valence >= 0.55:
-        tags = ["松弛", "偏暖"]
-    else:
-        tags = ["沉", "往下坠"]
-
-    if hand["warmth"] == "偏暖" and "偏暖" not in tags:
-        tags.append("偏暖")
-    if "平铺" in shape and "有起伏" not in tags:
-        tags.append("平铺")
-    elif "平铺" not in shape:
-        tags.append("有起伏")
-    return tags[:3]
+    if valence >= 0.55 and arousal >= 0.55:
+        return "有点上头。"
+    if valence >= 0.55:
+        return "听完是松的。"
+    if arousal >= 0.55:
+        return "有点燥，压着。"
+    return "听着有点闷。"
 
 
-def _anchors(segments: list[dict], measurements: dict) -> list[str]:
-    """几句可以被直接引用的「听感锚点」——都带数字，但说的是感觉。"""
-    out: list[str] = []
-    if not segments:
-        return out
+def _headline(shape: str, hand: dict, mood: dict) -> str:
+    body = "中间起起伏伏，像情绪一直没坐稳。"
+    for key, text in _HEADLINES.items():
+        if key in shape:
+            body = text
+            break
+    if "偏冷" in hand.get("warmth", "") and "雨停" in body:
+        body = "像傍晚天一点点暗下去：先是空的，中间热了一下，最后散了。"
+    return body + _mood_tail(mood)
 
-    louds = [s["loud_db"] for s in segments]
-    mid = _median(louds)
-    span = max(louds) - min(louds)
 
-    intro = segments[0]
-    intro_dur = intro["end"] - intro["start"]
-    intro_rel = intro["loud_db"] - mid
-    if intro_rel <= -3.0:
-        out.append(
-            f"开头 {intro_dur:.0f} 秒平均 {intro['loud_db']:.0f} dB，"
-            f"重心 {intro['brightness_hz']:.0f} Hz，"
-            + ("像一层高频的水汽，主体还没进来。" if intro["brightness_hz"] > 1500
-               else "压得很低，像还没开始。")
-        )
-    else:
-        out.append(
-            f"开头就进来了：{intro_dur:.0f} 秒平均 {intro['loud_db']:.0f} dB，"
-            f"重心 {intro['brightness_hz']:.0f} Hz。"
-        )
+def _feelings(hand: dict) -> list[str]:
+    """三个感受词：明暗 / 速度 / 密度（走 FEEL_STEPS，不是音色描述）。"""
+    return [
+        _feel_word("light", float(hand.get("brightness_hz") or 1500.0)),
+        _feel_word("tempo", float(hand.get("bpm") or 0.0)),
+        _feel_word("density", float(hand.get("density_per_sec") or 0.0)),
+    ]
 
-    if span >= 3.5:
-        peak = segments[louds.index(max(louds))]
-        out.append(
-            f"最满的是 {peak['start']:.0f}–{peak['end']:.0f} 秒，"
-            f"比常态响 {peak['loud_db'] - mid:+.1f} dB，"
-            f"重心 {peak['brightness_hz']:.0f} Hz。"
-        )
-    else:
-        out.append(f"全曲响度只差 {span:.1f} dB，几乎是一条直线——它不打算给你起伏。")
 
-    last = segments[-1]
-    if last["loud_db"] <= mid - 3.0:
-        out.append(
-            f"最后 {last['end'] - last['start']:.0f} 秒掉到 {last['loud_db']:.0f} dB"
-            + (f"，亮度反而回到 {last['brightness_hz']:.0f} Hz——像水汽散了，只剩天空。"
-               if last["brightness_hz"] > measurements.get("brightness_mean_hz", 0) * 1.3
-               else "，慢慢被收走。")
-        )
+def _mmss(seconds: float) -> str:
+    total = max(0, int(round(float(seconds or 0))))
+    return f"{total // 60}:{total % 60:02d}"
 
-    if span >= 3.5:
-        out.append(f"全曲响度跨度 {span:.1f} dB，"
-                   f"从「{_step(min(louds), LOUD_STEPS)}」走到「{_step(max(louds), LOUD_STEPS)}」。")
-    return out
+
+def _arc_line(arc: list[dict]) -> str:
+    """一行走向：最多四个点，别把整张表倒出来。"""
+    if not arc:
+        return ""
+    picks = {0, len(arc) - 1}
+    peak = max(range(len(arc)), key=lambda i: float(arc[i].get("loud_db") or -99))
+    picks.add(peak)
+    if len(arc) >= 5:
+        picks.add(round((peak + len(arc) - 1) / 2))
+    chosen = [arc[i] for i in sorted(picks)]
+    return " → ".join(f"{_mmss(seg['start'])} {seg['phase']}" for seg in chosen)
+
+
+def _hand_line(measurements: dict) -> str:
+    bpm = float(measurements.get("bpm") or 0.0)
+    light = _step_short("light", float(measurements.get("brightness_mean_hz") or 1500.0))
+    density = _step_short("density", float(measurements.get("note_density_per_sec") or 0.0))
+    key = str(measurements.get("key", ""))
+    warm = "暖" if key.endswith("大调") else ("凉" if key.endswith("小调") else "平")
+    return f"{bpm:g} BPM · {light} · {warm} · {density}"
 
 
 # --- 组装 ----------------------------------------------------------------
 
 
 def _units(result: dict) -> tuple[list[dict], str]:
-    """取讲故事的骨架单元。
-
-    优先用结构段；**段太少（<3）时退回 8 秒时间线**——短歌或结构检测没抓到
-    边界时，只有两段会让叙事变成「一直很响」，反而是错的。
-    """
+    """取讲故事的骨架单元。段太少（<3）时退回 8 秒时间线。"""
     segments = result.get("structure") or []
     if len(segments) >= 3:
         return list(segments), "segments"
@@ -333,16 +362,6 @@ def _units(result: dict) -> tuple[list[dict], str]:
     return units, "timeline"
 
 
-def _median(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    mid = len(ordered) // 2
-    if len(ordered) % 2:
-        return ordered[mid]
-    return (ordered[mid - 1] + ordered[mid]) / 2.0
-
-
 def build(result: dict) -> dict:
     """输入已经组装好的 result（report.build 之后、chords 之后都行）。"""
     measurements = result.get("measurements") or {}
@@ -352,12 +371,9 @@ def build(result: dict) -> dict:
 
     louds = [float(u.get("loud_db", -30.0)) for u in units]
     brights = [float(u.get("brightness_hz", 1000.0)) for u in units]
-    mean_loud = sum(louds) / len(louds) if louds else -30.0
-    # 用中位数而不是均值当「常态」：长尾的安静段会把均值拖走，
-    # 那样开头明明是薄雾也会被判成「正常」。
     mid_loud = _median(louds)
     mid_bright = _median(brights)
-    peak_loud = max(louds) if louds else mean_loud
+    peak_loud = max(louds) if louds else mid_loud
 
     arc = []
     for i, seg in enumerate(units):
@@ -386,29 +402,26 @@ def build(result: dict) -> dict:
 
     shape = _shape(louds)
     hand = _hand(measurements)
-    tags = _tags(hand, mood, shape)
+    headline = _headline(shape, hand, mood)
+    hand_values = {
+        "bpm": measurements.get("bpm"),
+        "brightness_hz": measurements.get("brightness_mean_hz"),
+        "density_per_sec": measurements.get("note_density_per_sec"),
+    }
     title = meta.get("title") or Path(str(result.get("source", "这首"))).stem
 
-    one_liner = (
-        f"《{title}》是一条「{shape}」的弧："
-        f"{hand['tempo']}，{hand['light']}，{hand['warmth']}，{hand['length']}。"
-    )
-
-    anchors = _anchors(units, measurements)
-
-    chords = result.get("key_from_chords") or {}
-    if chords.get("top_chords"):
-        anchors.append(f"和弦主要绕着 {' / '.join(chords['top_chords'][:4])} 转。")
-
     return {
-        "method": "vibe-v1",
+        "method": "vibe-v2",
         "grain": grain,
-        "one_liner": one_liner,
+        "headline": headline,
+        "feelings": _feelings(hand_values),
+        "arc_line": _arc_line(arc),
+        "hand_line": _hand_line(measurements),
+        "title": title,
+        "artist": meta.get("artist", ""),
+        # 以下给机器看，不进摘要
         "shape": shape,
         "arc": arc,
         "hand": hand,
-        "tags": tags,
-        "anchors": anchors,
-        "caveat": "把测量值翻译成人话的启发式映射，不是情绪识别；"
-                  "它只负责措辞，数字仍然以 measurements 为准。",
+        "caveat": "把测量值翻译成人话的启发式映射，不是情绪识别；它只负责措辞，数字仍以 measurements 为准。",
     }

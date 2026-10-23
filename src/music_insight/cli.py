@@ -1,4 +1,4 @@
-"""命令行入口：音频 → 证据包（图 + JSON + CSV + Markdown）。"""
+"""命令行入口：音频 → 感受底稿（+ 可选网络听众层）。"""
 
 from __future__ import annotations
 
@@ -13,11 +13,13 @@ from . import beats as beats_mod
 from . import chords as chords_mod
 from . import features, keydetect, render, report, structure, vibe
 
+__version__ = "0.2.0"
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="music-insight",
-        description="把音频转成 LLM 可读的证据包：测量指标 + 图 + 事实性报告。",
+        description="把音频转成一句感受 + 一行走向；需要证据时切 strict。全程离线。",
     )
     p.add_argument("input", help="音频文件（mp3/m4a/flac/wav…）")
     p.add_argument("--out", default="out", help="输出目录，默认 ./out")
@@ -26,10 +28,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--chords", action="store_true",
                    help="节拍跟踪 + 和弦识别，并由和弦反推调性（纯本地）")
     p.add_argument("--mode", choices=("vibe", "strict"), default="vibe",
-                   help="报告风格：vibe=先说听感、数字压后（默认，给人听）；"
+                   help="报告风格：vibe=一句感受 + 一行走向（默认）；"
                         "strict=可引用的证据清单（给评估/核对）")
     p.add_argument("--quiet", action="store_true", help="只输出文件路径")
-    p.add_argument("--version", action="version", version="music-insight 0.1.0")
+    p.add_argument("--version", action="version", version=f"music-insight {__version__}")
     return p
 
 
@@ -77,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             result["key_from_chords"] = keydetect.key_from_chords(durations)
         else:
             result["chords"] = {"error": "beat tracking failed"}
-        # 和弦会影响「和弦主要绕着谁转」这句听感锚点，重算一次感官层。
+        # 和弦会影响感官层的「和弦主要绕着谁转」一句，重算一次。
         result["vibe"] = vibe.build(result)
 
     if args.lyrics:
@@ -105,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {m['duration_sec']}s · {m['bpm']} BPM · {m['key']} "
               f"· {len(result['structure'])} 段 · 平均 {m['loudness_db']['mean']} dB")
         print(f"  mode: {args.mode}")
-        print(f"  {result['vibe']['one_liner']}")
+        print(f"  {result['vibe']['headline']}")
         print("  written:")
         for path in written:
             print(f"    {path}")

@@ -144,17 +144,22 @@ LLM_PROMPT = """你是音乐分析助手。下面是一首歌的**测量证据**
    禁止据此推断“有人声演唱”“人声频段占满”之类结论。
 """
 
-LLM_PROMPT_FUN = """你刚听完这首歌。下面是一份「感官底稿」：测量值已经被翻译成
-听感与骨架，标题和元信息也给你了。
+LLM_PROMPT_FUN = """你刚听完这首歌。下面是「一句感受 + 三个情绪词 + 一行走向」，以及几行可引用的数据
+（调性、和弦、关键时间点的响度）。
 
 规则：
-1. 先用第一人称说你听完的感受，2–4 句。可以说“我觉得”，可以比喻，
-   可以联想歌名、天气、画面、季节——那是你作为听众该做的事。
-2. 骨架（哪里轻、哪里满、怎么散）是事实，可以拿来支撑感觉；数字不必逐个报，
-   更不要写字段名，除非对方明确要。
-3. 允许不确定：说“我猜这段像是……”比装作知道更好。
-4. 乐器、人声、年代、流派证据层没有——你可以猜，但要标成猜测。
-5. 对方要硬数据时，再切到 strict 模式 / report.md。
+1. **歌名、歌手、专辑只是文件标签，不可信**（可能是错的、被改过的、同名不同曲）。
+   只依据下面给的数据说话；**不要搜索、不要调用任何联网工具、不要引用网络上的
+   评论/歌词/歌手背景**——那些不是你的感受。
+2. 2–4 句，总共不超过 100 字。第一句直接说感觉，像普通人；**但要有 1 处具体数据**：
+   时间点（1:34 那段）、数字（最满 -20 dB）、调性（C 大调 / A 小调）或和弦（一直绕着 C-F-G）。
+   数据要顺口带过，像懂行的朋友聊天，不是报参数。
+3. 最多用 2 个数据点、1 个术语（和弦 / 调性 / 频段），不列清单、不写“根据测量 / 频谱显示”。
+4. 情绪直接说出来（闷 / 空 / 松 / 想哭 / 上头 / 没感觉），再补具体的：
+   哪一段、什么时候听的、身体反应。
+5. 不许总结、不许分点、不许排比；不要写“总的来说 / 氛围 / 张力 / 层次”这类词。
+6. 不确定就说「好像 / 说不上来」，不要编歌词、歌手、年代、乐器。
+7. 对方要完整数据时，再切 strict 报告。
 """
 
 
@@ -204,6 +209,7 @@ HPCP + 三/七和弦模板 + Viterbi + 类别先验。合成钢琴音频上根�
 
 无歌词转写（`--lyrics` 默认关闭且需检查 `no_speech_prob`）、无年代 / 流派判断、
 无音乐语义理解。本项目不是音乐理解模型。
+**全程离线**：不联网、不取评论、不调用任何第三方接口。
 
 ---
 
@@ -342,6 +348,9 @@ def _to_markdown_strict(result: dict, path: str | Path) -> str:
         "- **情绪先验是启发式**：只在校准范围内有意义，超出时已标记失效。",
         "- 完整失效条件见 LIMITS.md。",
         "",
+    ]
+
+    lines += [
         "## 8. 给解读模型的提示词（strict）",
         "",
         "```text",
@@ -357,112 +366,62 @@ def _to_markdown_strict(result: dict, path: str | Path) -> str:
 
 
 def _to_markdown_vibe(result: dict, path: str | Path) -> str:
-    """vibe 报告：先说感觉，数字压到最后。同一份 measurements，不同排法。"""
+    """vibe 报告：一屏看完。
+
+    结构固定三块：感觉 → 走向 → 数据。没有表格，没有逐段列表，
+    没有免责声明大礼包——那些都在 strict 报告和 LIMITS.md 里，需要时再看。
+    """
     m = result["measurements"]
-    md = result["mood_priors"]
     v = result.get("vibe") or vibe_mod.build(result)
     title, artist = _header(result)
-    dur = float(m["duration_sec"])
-    dur_text = f"{int(dur)} 秒" if dur < 60 else f"{int(dur // 60)} 分 {int(dur % 60)} 秒"
-    byline = " · ".join(x for x in (
-        artist,
-        dur_text,
-        f"{m['bpm']} BPM",
-        m["key"],
-    ) if x)
+    dur_text = _mmss(float(m["duration_sec"]))
+    byline = " · ".join(x for x in (artist, dur_text, f"{m['bpm']} BPM", m["key"]) if x)
 
-    sections: list[tuple[str, list[str]]] = []
-
-    sections.append(("一句话", ["", v["one_liner"], ""]))
-
-    arc_rows = ["", "| 时间 | 阶段 | 响度 dB | 明暗 Hz | 听感 |", "|---|---|---|---|---|"]
-    for seg in v["arc"]:
-        arc_rows.append(
-            f"| {_mmss(seg['start'])}–{_mmss(seg['end'])} | {seg['phase']} "
-            f"| {seg['loud_db']} | {seg['brightness_hz']:.0f} | {seg['word']} |"
-        )
-    arc_rows += ["", f"全曲是一条「{v['shape']}」的弧。", ""]
-    if v.get("grain") == "timeline":
-        arc_rows += ["（结构检测没抓到边界，这里按 8 秒时间线讲。）", ""]
-    sections.append(("它怎么走的", arc_rows))
-
-    hand_rows = ["", "| 维度 | 手感 |", "|---|---|",
-                 f"| 速度 | {v['hand']['tempo']}（{m['bpm']} BPM） |",
-                 f"| 明暗 | {v['hand']['light']} |",
-                 f"| 密度 | {v['hand']['density']}（{m['note_density_per_sec']}/s） |",
-                 f"| 长度 | {v['hand']['length']}（{m['duration_sec']} 秒） |",
-                 f"| 温度 | {v['hand']['warmth']}（{m['key']}） |",
-                 f"| 整体响度 | {v['hand']['loudness']}（{m['loudness_db']['mean']} dB） |", ""]
-    sections.append(("手感", hand_rows))
-
-    sections.append(("标签", ["", "  ·  ".join(f"`{t}`" for t in v["tags"]), ""]))
-
-    if result.get("chords") and "segments" in result["chords"]:
-        kfc = result.get("key_from_chords") or {}
-        chord_lines = [""]
-        if kfc.get("top_chords"):
-            chord_lines.append(f"- 绕着这几个和弦转：{' / '.join(kfc['top_chords'])}")
-        if kfc.get("ambiguous_relative"):
-            pair = kfc.get("relative_pair") or [kfc["key"], kfc["runner_up"]]
-            chord_lines.append(
-                f"- 调性在 **{pair[0]}** 和 {pair[1]} 之间二选一——"
-                "这两个是关系调，共享同一批和弦，光是听和弦分不出来。"
-            )
-        chord_lines += ["", "| 起止 | 和弦 |", "|---|---|"]
-        for seg in result["chords"]["segments"][:24]:
-            chord_lines.append(f"| {_mmss(seg['start'])}–{_mmss(seg['end'])} | {seg['chord']} |")
-        if len(result["chords"]["segments"]) > 24:
-            chord_lines.append(f"| … | 共 {len(result['chords']['segments'])} 段 |")
-        chord_lines.append("")
-        sections.append(("和弦", chord_lines))
-
-    data_lines = ["", "| 指标 | 值 |", "|---|---|",
-                  f"| 时长 | {m['duration_sec']} 秒 |",
-                  f"| 速度 | {m['bpm']} BPM |",
-                  f"| 调性 | {m['key']}（多源一致度 {m.get('key_agreement', '-')}） |",
-                  f"| 平均响度 | {m['loudness_db']['mean']} dB |",
-                  f"| 峰值相对电平 | {m['crest_db']} dB |",
-                  f"| 音符密度 | {m['note_density_per_sec']}/s |",
-                  f"| 主要音级 | {' / '.join(m['mean_chroma_top3'])} |",
-                  f"| 中频带能量占比 | {m['mid_band_ratio']:.0%}（音色描述，与人声无关） |",
-                  "",
-                  "情绪先验（仅供参考，不是测量）：唤醒 "
-                  f"{md['arousal']} / 效价 {md['valence']} → {md['labels']}。", ""]
-    sections.append(("数据（给较真的人）", data_lines))
-
-    sections.append(("这次没测的", [
+    lines = [
+        f"# 听完《{title}》",
         "",
-        "旋律、音色、有没有人声、流派、歌词——证据层本来就没有这些。",
-        "完整失效条件见 [LIMITS.md](LIMITS.md)。",
+        f"> {byline}",
         "",
-    ]))
+        "## 感觉",
+        "",
+        v["headline"],
+        "",
+        " / ".join(v["feelings"]),
+        "",
+        "## 走向",
+        "",
+        v.get("arc_line") or "—",
+        "",
+        v.get("hand_line", ""),
+        "",
+        "## 数据",
+        "",
+        f"{dur_text} · {m['bpm']} BPM · {m['key']} · {m['loudness_db']['mean']} dB · "
+        f"{m['note_density_per_sec']}/s · 中频 {m['mid_band_ratio']:.0%}",
+        "",
+    ]
 
-    sections.append(("给解读模型的提示词（vibe）", [
+    kfc = result.get("key_from_chords") or {}
+    if kfc.get("top_chords"):
+        amb = (f"（{kfc['key']} / {kfc['relative_pair'][1]} 二选一）"
+               if kfc.get("ambiguous_relative") and kfc.get("relative_pair")
+               else f"（{kfc.get('key', '?')}）")
+        lines += [f"和弦：{' / '.join(kfc['top_chords'][:4])}{amb}", ""]
+
+    lines += [
+        "完整数值见 `analysis.json`；要引用请用 `--mode strict`。",
+        "",
+        "## 改写提示词（给模型）",
         "",
         "```text",
         LLM_PROMPT_FUN.strip(),
         "```",
         "",
-    ]))
-
-    lines = [
-        f"# 听完《{title}》",
-        "",
-        f"> {byline}  ",
-        "> 这是把测量值翻译成听感的底稿：数字在最后，先讲感觉。",
-        "",
-    ]
-    for i, (heading, body) in enumerate(sections, 1):
-        lines.append(f"## {i}. {heading}")
-        lines.extend(body if body else [""])
-
-    lines += [
-        f"> 映射方法：`{v['method']}`。{v['caveat']}",
+        f"> `{v['method']}` · 出处与限制见 LIMITS.md",
         "",
     ]
     Path(path).write_text("\n".join(lines), encoding="utf-8", newline="\n")
     return str(path)
-
 
 REPORT_MODES = ("vibe", "strict")
 

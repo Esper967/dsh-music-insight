@@ -1,9 +1,9 @@
 {
   "name": "dsh-music-insight",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Turn local audio into a sensory draft (arc + feel + metadata) plus an optional evidence sheet.",
+  "description": "Turn local audio into a one-line feeling and an arc. Fully offline.",
   "exports": {
     ".": "./index.js",
     "./locale/*.json": "./locale/*.json",

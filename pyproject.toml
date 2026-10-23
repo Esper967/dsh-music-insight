@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "music-insight"
-version = "0.1.0"
-description = "Turn audio into an LLM-readable evidence pack: measurements, figures, and a factual report."
+version = "0.2.0"
+description = "Turn audio into a one-line feeling, three mood words and an arc — fully offline, with an optional evidence sheet."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
