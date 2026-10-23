@@ -1,1 +1,1 @@
-{ "meta": { "title": "音乐证据包", "description": "把本地音频分析成测量数据、和弦时间线与事实性 Markdown 报告。" } }
+{ "meta": { "title": "音乐听感底稿", "description": "把本地音频翻译成骨架与听感，让模型能聊这首歌；需要证据清单时切 strict。" } }

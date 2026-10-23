@@ -11,7 +11,7 @@ import numpy as np
 from . import audio as audio_mod
 from . import beats as beats_mod
 from . import chords as chords_mod
-from . import features, keydetect, render, report, structure
+from . import features, keydetect, render, report, structure, vibe
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,6 +25,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lyrics", action="store_true", help="尝试转写歌词（需要 faster-whisper）")
     p.add_argument("--chords", action="store_true",
                    help="节拍跟踪 + 和弦识别，并由和弦反推调性（纯本地）")
+    p.add_argument("--mode", choices=("vibe", "strict"), default="vibe",
+                   help="报告风格：vibe=先说听感、数字压后（默认，给人听）；"
+                        "strict=可引用的证据清单（给评估/核对）")
     p.add_argument("--quiet", action="store_true", help="只输出文件路径")
     p.add_argument("--version", action="version", version="music-insight 0.1.0")
     return p
@@ -74,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
             result["key_from_chords"] = keydetect.key_from_chords(durations)
         else:
             result["chords"] = {"error": "beat tracking failed"}
+        # 和弦会影响「和弦主要绕着谁转」这句听感锚点，重算一次感官层。
+        result["vibe"] = vibe.build(result)
 
     if args.lyrics:
         try:
@@ -85,7 +90,8 @@ def main(argv: list[str] | None = None) -> int:
     written = [
         report.to_json(result, out_dir / "analysis.json"),
         report.to_timeline_csv(result, out_dir / "timeline.csv"),
-        report.to_markdown(result, out_dir / "report.md"),
+        report.to_markdown(result, out_dir / "report.md", mode=args.mode),
+        report.to_limits(out_dir / "LIMITS.md"),
     ]
     if image_path:
         written.append(image_path)
@@ -98,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"music-insight: {src.name}")
         print(f"  {m['duration_sec']}s · {m['bpm']} BPM · {m['key']} "
               f"· {len(result['structure'])} 段 · 平均 {m['loudness_db']['mean']} dB")
+        print(f"  mode: {args.mode}")
+        print(f"  {result['vibe']['one_liner']}")
         print("  written:")
         for path in written:
             print(f"    {path}")

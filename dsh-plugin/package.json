@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Analyze local audio into an LLM-readable evidence pack (measurements, figures, report).",
+  "description": "Turn local audio into a sensory draft (arc + feel + metadata) plus an optional evidence sheet.",
   "exports": {
     ".": "./index.js",
     "./locale/*.json": "./locale/*.json",
